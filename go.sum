@@ -1,0 +1,6 @@
+github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
+github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
+github.com/ln80/struct-sensitive v0.0.0-20240921122915-9de344ccf0ca h1:Knd0ARWv8QrNhWhTGSl78WDHhJBOvYAeY3nJ4+PRTIE=
+github.com/ln80/struct-sensitive v0.0.0-20240921122915-9de344ccf0ca/go.mod h1:NG34sLSsqyyDodbcOI7VUWtK0AR1mt6dhBVdiHg3GSs=
+github.com/sanity-io/litter v1.5.5 h1:iE+sBxPBzoK6uaEP5Lt3fHNgpKcHXc/A2HGETy0uJQo=
+github.com/sanity-io/litter v1.5.5/go.mod h1:9gzJgR2i4ZpjZHsKvUXIRQVk7P+yM3e+jAF7bU2UI5U=
