@@ -78,8 +78,16 @@ func DefaultTokenGen(ctx context.Context, namespace string, data TokenData) (str
 }
 
 type TokenEngine interface {
+	// Tokenize receives a set of personal or sensitive data and returns tokens for each.
+	// It always returns the same token for a given data unless a [TokenEngine.Detokenize]
+	// call was made then it generates a new one.
 	Tokenize(ctx context.Context, namespace string, values []TokenData, opts ...func(*TokenizeConfig)) (valueTokens ValueTokenMap, err error)
+
+	// Detokenize returns a set of sensitives data associated with the given tokens.
+	// It simply ignores the not found tokens.
 	Detokenize(ctx context.Context, namespace string, tokens []string) (tokenValues TokenValueMap, err error)
+
+	// DeleteToken deletes the token from the storage. The next call of TOkenize will generates a new one.
 	DeleteToken(ctx context.Context, namespace string, token string) error
 }
 
@@ -87,5 +95,6 @@ type TokenEngine interface {
 type TokenEngineCache interface {
 	TokenEngine
 
+	// ClearCache does clears the cache for the given namespace.
 	ClearCache(ctx context.Context, namespace string, force bool) error
 }

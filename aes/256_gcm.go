@@ -16,14 +16,18 @@ const (
 )
 
 func Key256GenFn(ctx context.Context, namespace, subID string) (string, error) {
-	return string(getRandomBytes(aES265KeySize)), nil
+	d, err := getRandomBytes(aES265KeySize)
+	if err != nil {
+		return "", err
+	}
+	return string(d), nil
 }
 
 type aes256gcm struct{}
 
-var _ core.Encrypter = &aes256gcm{}
+var _ core.Encryptor = &aes256gcm{}
 
-func New256GCMEncrypter() core.Encrypter {
+func New256GCMEncryptor() core.Encryptor {
 	return &aes256gcm{}
 }
 

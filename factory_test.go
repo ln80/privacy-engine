@@ -7,14 +7,13 @@ import (
 	"time"
 
 	"github.com/ln80/privacy-engine/memory"
-	"github.com/ln80/privacy-engine/testutil"
 )
 
 type spyProtector struct {
 	Protector
 
 	mu    sync.RWMutex
-	Calls testutil.FuncCalls
+	Calls FuncCalls
 }
 
 func (tp *spyProtector) Clear(ctx context.Context, force bool) error {
@@ -22,7 +21,7 @@ func (tp *spyProtector) Clear(ctx context.Context, force bool) error {
 	defer tp.mu.Unlock()
 
 	if tp.Calls == nil {
-		tp.Calls = testutil.NewFuncCalls()
+		tp.Calls = NewFuncCalls()
 	}
 	tp.Calls["Clear"] = append(tp.Calls["Clear"], time.Now())
 
@@ -97,7 +96,7 @@ func TestFactory(t *testing.T) {
 
 	assertProtectorCount(t, f.(*factory), 0)
 
-	// init a new Protector and force context cancelation
+	// init a new Protector and force context cancellation
 	p3, _ := f.Instance("namespace_2")
 
 	if want, got := 1, len(f.(*factory).reg); want != got {

@@ -1,4 +1,4 @@
-package testutil
+package privacytest
 
 import (
 	"errors"
@@ -12,19 +12,19 @@ var (
 	ErrEncryptionMock = errors.New("encryption errors mock")
 )
 
-var _ core.Encrypter = &UnstableEncrypterMock{}
+var _ core.Encryptor = &UnstableEncryptorMock{}
 
-type UnstableEncrypterMock struct {
+type UnstableEncryptorMock struct {
 	PointOfFailure, counter int
 	mu                      sync.RWMutex
 }
 
-func (e *UnstableEncrypterMock) ResetCounter() {
+func (e *UnstableEncryptorMock) ResetCounter() {
 	e.counter = 0
 }
 
-// Decrypt implements core.Encrypter
-func (e *UnstableEncrypterMock) Decrypt(namespace string, key core.Key, cipherTxt []byte) (plainTxt string, err error) {
+// Decrypt implements core.Encryptor
+func (e *UnstableEncryptorMock) Decrypt(namespace string, key core.Key, cipherTxt []byte) (plainTxt string, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -36,8 +36,8 @@ func (e *UnstableEncrypterMock) Decrypt(namespace string, key core.Key, cipherTx
 	return string(cipherTxt[len("mock"):]), nil
 }
 
-// Encrypt implements core.Encrypter
-func (e *UnstableEncrypterMock) Encrypt(namespace string, key core.Key, plainTxt string) (cipherTxt []byte, err error) {
+// Encrypt implements core.Encryptor
+func (e *UnstableEncryptorMock) Encrypt(namespace string, key core.Key, plainTxt string) (cipherTxt []byte, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -49,7 +49,7 @@ func (e *UnstableEncrypterMock) Encrypt(namespace string, key core.Key, plainTxt
 	return []byte("mock" + plainTxt), nil
 }
 
-// KeyGen implements core.Encrypter
-func (*UnstableEncrypterMock) KeyGen() core.KeyGen {
+// KeyGen implements core.Encryptor
+func (*UnstableEncryptorMock) KeyGen() core.KeyGen {
 	return nil
 }

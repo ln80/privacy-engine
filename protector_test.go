@@ -8,7 +8,7 @@ import (
 
 	"github.com/ln80/privacy-engine/core"
 	"github.com/ln80/privacy-engine/memory"
-	"github.com/ln80/privacy-engine/testutil"
+	"github.com/ln80/privacy-engine/privacytest"
 	sensitive "github.com/ln80/struct-sensitive"
 )
 
@@ -19,18 +19,18 @@ func TestProtector_EncryptDecrypt(t *testing.T) {
 
 	p := NewProtector(nspace, memory.NewKeyEngine())
 
-	pf1 := testutil.Profile{
+	pf1 := Profile{
 		UserID:   "kal5430",
 		Fullname: "Idir Moore",
 		Gender:   "M",
 		Country:  "MA",
-		Address: testutil.Address{
+		Address: Address{
 			Street: "56559 Von Divide",
 		},
 	}
 	opf1 := pf1
 
-	pf2 := testutil.Profile{
+	pf2 := Profile{
 		UserID:   "aze6590",
 		Fullname: "Anna Gibz",
 		Gender:   "F",
@@ -43,7 +43,7 @@ func TestProtector_EncryptDecrypt(t *testing.T) {
 			t.Fatal("expect err be nil, got", err)
 		}
 
-		ignored := testutil.IgnoredStruct{Val: "value"}
+		ignored := StructNotPII{Val: "value"}
 		oignored := ignored
 
 		if err := p.Encrypt(ctx, &ignored); err != nil {
@@ -80,7 +80,7 @@ func TestProtector_EncryptDecrypt(t *testing.T) {
 
 	t.Run("encrypt-decrypt unsupported field type", func(t *testing.T) {
 		tcs := []any{
-			&testutil.InvalidStruct3{Val1: "id", Val2: 30},
+			&StructSubjectInvalidType{Val1: "id", Val2: 30},
 		}
 
 		want := sensitive.ErrUnsupportedFieldType
@@ -97,23 +97,23 @@ func TestProtector_EncryptDecrypt(t *testing.T) {
 	t.Run("encrypt-decrypt personal data with invalid tag configuration", func(t *testing.T) {
 		tcs := []struct {
 			val        any
-			encryptErr error
+			Encryptorr error
 			decryptErr error
 		}{
 			{
-				val:        &testutil.InvalidStruct1{},
-				encryptErr: sensitive.ErrInvalidTagConfiguration,
+				val:        &StructSubjectNotFound{},
+				Encryptorr: sensitive.ErrInvalidTagConfiguration,
 			},
 			{
-				val:        &testutil.InvalidStruct2{Val1: "id", Val2: "otherId"},
-				encryptErr: sensitive.ErrInvalidTagConfiguration,
+				val:        &StructMultipleSubjects{Val1: "id", Val2: "otherId"},
+				Encryptorr: sensitive.ErrInvalidTagConfiguration,
 				decryptErr: sensitive.ErrInvalidTagConfiguration,
 			},
 		}
 
 		for _, tc := range tcs {
-			if err := p.Encrypt(ctx, tc.val); !errors.Is(err, tc.encryptErr) {
-				t.Errorf("expect err be '%v', got '%v'", tc.encryptErr, err)
+			if err := p.Encrypt(ctx, tc.val); !errors.Is(err, tc.Encryptorr) {
+				t.Errorf("expect err be '%v', got '%v'", tc.Encryptorr, err)
 			}
 			if err := p.Decrypt(ctx, tc.val); !errors.Is(err, tc.decryptErr) {
 				t.Errorf("expect err be '%v', got '%v'", tc.decryptErr, err)
@@ -156,15 +156,15 @@ func TestProtector_EncryptDecrypt(t *testing.T) {
 
 		t.Skip("skipping this test as atomicity support has been dropped by now.")
 
-		enc := &testutil.UnstableEncrypterMock{
+		enc := &privacytest.UnstableEncryptorMock{
 			PointOfFailure: 2,
 		}
 
 		p := NewProtector(nspace, memory.NewKeyEngine(), func(pc *ProtectorConfig) {
-			pc.Encrypter = enc
+			pc.Encryptor = enc
 		})
 
-		pf1 := testutil.Profile{
+		pf1 := Profile{
 			UserID:   "kal5430",
 			Fullname: "Idir Moore",
 			Gender:   "M",
@@ -172,7 +172,7 @@ func TestProtector_EncryptDecrypt(t *testing.T) {
 		}
 		opf1 := pf1
 
-		pf2 := testutil.Profile{
+		pf2 := Profile{
 			UserID:   "hjl5a00",
 			Fullname: "Jav Koelpin",
 			Gender:   "M",
@@ -220,7 +220,7 @@ func TestProtector_EncryptDecrypt(t *testing.T) {
 	t.Run("encrypt-decrypt idempotency", func(t *testing.T) {
 		p := NewProtector(nspace, memory.NewKeyEngine())
 
-		pf1 := testutil.Profile{
+		pf1 := Profile{
 			UserID:   "kal5430",
 			Fullname: "Idir Moore",
 			Gender:   "M",
@@ -256,7 +256,7 @@ func TestProtector_EncryptDecrypt(t *testing.T) {
 	})
 
 	t.Run("crypto-erase personal data", func(t *testing.T) {
-		pf := testutil.Profile{
+		pf := Profile{
 			UserID:   "dal5431",
 			Fullname: "Idir Moore",
 			Gender:   "M",
@@ -276,7 +276,7 @@ func TestProtector_EncryptDecrypt(t *testing.T) {
 		}
 
 		// forget subjectID i.e, forget subjectID's encryption key
-		if err := p.Forget(ctx, pf.TEST_PII_SubjectID()); err != nil {
+		if err := p.Forget(ctx, pf.UserID); err != nil {
 			t.Fatal("expect err be nil, got", err)
 		}
 
@@ -284,10 +284,11 @@ func TestProtector_EncryptDecrypt(t *testing.T) {
 		if err := p.Decrypt(ctx, &pf); err != nil {
 			t.Fatal("expect err be nil, got", err)
 		}
-		if want, got := pf.TEST_PII_Replacement("Fullname"), pf.Fullname; !reflect.DeepEqual(want, got) {
+
+		if want, got := sensitive.MustFieldTag(pf, "Fullname").Options.Get("replace"), pf.Fullname; !reflect.DeepEqual(want, got) {
 			t.Fatalf("expect %v, %v be equals", want, got)
 		}
-		if want, got := pf.TEST_PII_Replacement("Gender"), pf.Gender; !reflect.DeepEqual(want, got) {
+		if want, got := sensitive.MustFieldTag(pf, "Gender").Options.Get("replace"), pf.Gender; !reflect.DeepEqual(want, got) {
 			t.Fatalf("expect %v, %v be equals", want, got)
 		}
 
@@ -297,7 +298,7 @@ func TestProtector_EncryptDecrypt(t *testing.T) {
 		}
 
 		// succefully recover a subjectID encryption material (optional, Key engine may not support it)
-		if err := p.Recover(ctx, pf.TEST_PII_SubjectID()); err != nil {
+		if err := p.Recover(ctx, pf.UserID); err != nil {
 			t.Fatal("expect err be nil, got", err)
 		}
 
@@ -308,10 +309,10 @@ func TestProtector_EncryptDecrypt(t *testing.T) {
 		if err := p.Decrypt(ctx, &pf); err != nil {
 			t.Fatal("expect err be nil, got", err)
 		}
-		if want, got := pf.TEST_PII_Replacement("Fullname"), pf.Fullname; !reflect.DeepEqual(want, got) {
+		if want, got := sensitive.MustFieldTag(pf, "Fullname").Options.Get("replace"), pf.Fullname; !reflect.DeepEqual(want, got) {
 			t.Fatalf("expect %v, %v be equals", want, got)
 		}
-		if want, got := pf.TEST_PII_Replacement("Gender"), pf.Gender; !reflect.DeepEqual(want, got) {
+		if want, got := sensitive.MustFieldTag(pf, "Gender").Options.Get("replace"), pf.Gender; !reflect.DeepEqual(want, got) {
 			t.Fatalf("expect %v, %v be equals", want, got)
 		}
 
@@ -323,10 +324,10 @@ func TestProtector_EncryptDecrypt(t *testing.T) {
 
 		p.(*protector).GracefulMode = false
 
-		if err := p.Forget(ctx, pf.TEST_PII_SubjectID()); err != nil {
+		if err := p.Forget(ctx, pf.UserID); err != nil {
 			t.Fatal("expect err be nil, got", err)
 		}
-		if want, err := ErrCannotRecoverSubject, p.Recover(ctx, pf.TEST_PII_SubjectID()); !errors.Is(err, want) {
+		if want, err := ErrCannotRecoverSubject, p.Recover(ctx, pf.UserID); !errors.Is(err, want) {
 			t.Fatalf("expect err be %v, got %v", want, err)
 		}
 	})
@@ -342,13 +343,13 @@ func BenchmarkProtector(b *testing.B) {
 	b.Run("encrypt", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			pfs := []any{
-				&testutil.Profile{
+				&Profile{
 					UserID:   "xal5430",
 					Fullname: "Idir Moore",
 					Gender:   "M",
 					Country:  "MA",
 				},
-				&testutil.Profile{
+				&Profile{
 					UserID:   "kal5430",
 					Fullname: "Idir Moore",
 					Gender:   "M",
@@ -367,13 +368,13 @@ func BenchmarkProtector(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			b.StopTimer()
 			pfs := []any{
-				&testutil.Profile{
+				&Profile{
 					UserID:   "xal5430",
 					Fullname: "Idir Moore",
 					Gender:   "M",
 					Country:  "MA",
 				},
-				&testutil.Profile{
+				&Profile{
 					UserID:   "kal5430",
 					Fullname: "Idir Moore",
 					Gender:   "M",

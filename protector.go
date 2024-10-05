@@ -1,5 +1,3 @@
-// package privacy offers tools to deal with
-// Personal Identified Information in struct-field level
 package privacy
 
 import (
@@ -64,9 +62,9 @@ type ProtectorConfig struct {
 	// It manages encryption materials' life-cycle.
 	KeyEngine core.KeyEngine
 
-	// Encrypter presents an implementation of core.Encrypter.
+	// Encryptor presents an implementation of core.Encryptor.
 	// It allows using a specific encryption algorithm.
-	Encrypter core.Encrypter
+	Encryptor core.Encryptor
 
 	// CacheEnabled used to enable/disable cache.
 	CacheEnabled bool
@@ -96,7 +94,7 @@ var _ Protector = &protector{}
 // It panics if the given engine is nil.
 // It uses a default namespace if the given namespace is empty.
 //
-// By default, Cache and Graceful mode options are enabled and 'AES 256 GCM' encrypter is used.
+// By default, Cache and Graceful mode options are enabled and 'AES 256 GCM' Encryptor is used.
 func NewProtector(namespace string, engine core.KeyEngine, opts ...func(*ProtectorConfig)) Protector {
 	if namespace == "" {
 		namespace = "default"
@@ -105,7 +103,7 @@ func NewProtector(namespace string, engine core.KeyEngine, opts ...func(*Protect
 	p := &protector{
 		namespace: namespace,
 		ProtectorConfig: &ProtectorConfig{
-			Encrypter:    aes.New256GCMEncrypter(),
+			Encryptor:    aes.New256GCMEncryptor(),
 			KeyEngine:    engine,
 			CacheEnabled: true,
 			GracefulMode: true,
@@ -166,7 +164,7 @@ func (p *protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) 
 	slices.Sort(subjectIDs)
 	subjectIDs = slices.Compact(subjectIDs)
 
-	keys, err := p.KeyEngine.GetOrCreateKeys(ctx, p.namespace, subjectIDs, p.Encrypter.KeyGen())
+	keys, err := p.KeyEngine.GetOrCreateKeys(ctx, p.namespace, subjectIDs, p.Encryptor.KeyGen())
 	if err != nil {
 		return err
 	}
@@ -184,7 +182,7 @@ func (p *protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) 
 			return
 		}
 
-		encodedVal, err := p.Encrypter.Encrypt(p.namespace, key, val)
+		encodedVal, err := p.Encryptor.Encrypt(p.namespace, key, val)
 		if err != nil {
 			return
 		}
@@ -265,7 +263,7 @@ func (p *protector) Decrypt(ctx context.Context, structPtrs ...any) (err error) 
 			return
 		}
 
-		newVal, err = p.Encrypter.Decrypt(p.namespace, key, cipherText)
+		newVal, err = p.Encryptor.Decrypt(p.namespace, key, cipherText)
 		if err != nil {
 			return "", err
 		}
@@ -305,7 +303,6 @@ func (p *protector) Forget(ctx context.Context, subID string) (err error) {
 
 // Encrypt implements Protector
 func (p *protector) Recover(ctx context.Context, subID string) (err error) {
-
 	defer func() {
 		if err != nil {
 			if errors.Is(err, core.ErrKeyNotFound) {
@@ -362,14 +359,14 @@ func (p *protector) Detokenize(ctx context.Context, namespace string, tokens []s
 // Tokenize implements Protector.
 func (p *protector) Tokenize(ctx context.Context, namespace string, values []core.TokenData, opts ...func(*core.TokenizeConfig)) (core.ValueTokenMap, error) {
 	if p.TokenEngine == nil {
-		panic("unsupported action. token engine not found")
+		panic("unsupported action. Token engine is not found")
 	}
 	return p.TokenEngine.Tokenize(ctx, namespace, values)
 }
 
 func (p *protector) DeleteToken(ctx context.Context, namespace string, token string) error {
 	if p.TokenEngine == nil {
-		panic("unsupported action. token engine not found")
+		panic("unsupported action. Token engine is not found")
 	}
 	return p.TokenEngine.DeleteToken(ctx, namespace, token)
 }

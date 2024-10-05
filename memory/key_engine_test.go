@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ln80/privacy-engine/testutil"
+	"github.com/ln80/privacy-engine/privacytest"
 )
 
 func TestKeyEngine(t *testing.T) {
@@ -14,7 +14,7 @@ func TestKeyEngine(t *testing.T) {
 	t.Run("in-memory engine", func(t *testing.T) {
 		eng := NewKeyEngine()
 
-		testutil.KeyEngineTestSuite(t, ctx, eng)
+		privacytest.RunKeyEngineTest(t, ctx, eng)
 	})
 
 	t.Run("in-memory cache wrapper engine", func(t *testing.T) {
@@ -22,6 +22,6 @@ func TestKeyEngine(t *testing.T) {
 
 		eng := NewCacheWrapper(originEng, 20*time.Minute)
 
-		testutil.KeyEngineTestSuite(t, ctx, eng)
+		privacytest.RunKeyEngineTest(t, ctx, eng)
 	})
 }

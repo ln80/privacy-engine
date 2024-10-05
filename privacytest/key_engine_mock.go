@@ -1,4 +1,4 @@
-package testutil
+package privacytest
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"github.com/ln80/privacy-engine/core"
 )
 
-type EngineMock struct {
+type KeyEngineMock struct {
 	NamespaceList []string
 	KeyList       core.KeyMap
 
@@ -22,7 +22,7 @@ type EngineMock struct {
 }
 
 // DeleteKey implements dynamodb.KeyEngine
-func (e *EngineMock) DeleteKey(ctx context.Context, namespace string, keyID string) error {
+func (e *KeyEngineMock) DeleteKey(ctx context.Context, namespace string, keyID string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -33,7 +33,7 @@ func (e *EngineMock) DeleteKey(ctx context.Context, namespace string, keyID stri
 }
 
 // DeleteUnusedKeys implements dynamodb.KeyEngine
-func (e *EngineMock) DeleteUnusedKeys(ctx context.Context, namespace string) error {
+func (e *KeyEngineMock) DeleteUnusedKeys(ctx context.Context, namespace string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -44,7 +44,7 @@ func (e *EngineMock) DeleteUnusedKeys(ctx context.Context, namespace string) err
 }
 
 // DisableKey implements dynamodb.KeyEngine
-func (e *EngineMock) DisableKey(ctx context.Context, namespace string, keyID string) error {
+func (e *KeyEngineMock) DisableKey(ctx context.Context, namespace string, keyID string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -56,7 +56,7 @@ func (e *EngineMock) DisableKey(ctx context.Context, namespace string, keyID str
 }
 
 // GetKeys implements dynamodb.KeyEngine
-func (e *EngineMock) GetKeys(ctx context.Context, namespace string, keyIDs []string) (keys core.KeyMap, err error) {
+func (e *KeyEngineMock) GetKeys(ctx context.Context, namespace string, keyIDs []string) (keys core.KeyMap, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -68,7 +68,7 @@ func (e *EngineMock) GetKeys(ctx context.Context, namespace string, keyIDs []str
 }
 
 // GetOrCreateKeys implements dynamodb.KeyEngine
-func (e *EngineMock) GetOrCreateKeys(ctx context.Context, namespace string, keyIDs []string, keyGen core.KeyGen) (core.KeyMap, error) {
+func (e *KeyEngineMock) GetOrCreateKeys(ctx context.Context, namespace string, keyIDs []string, keyGen core.KeyGen) (core.KeyMap, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -84,7 +84,7 @@ func (e *EngineMock) GetOrCreateKeys(ctx context.Context, namespace string, keyI
 }
 
 // ReEnableKey implements dynamodb.KeyEngine
-func (e *EngineMock) ReEnableKey(ctx context.Context, namespace string, keyID string) error {
+func (e *KeyEngineMock) ReEnableKey(ctx context.Context, namespace string, keyID string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -95,7 +95,7 @@ func (e *EngineMock) ReEnableKey(ctx context.Context, namespace string, keyID st
 }
 
 // ListNamespace implements dynamodb.KeyEngine
-func (e *EngineMock) ListNamespace(ctx context.Context) ([]string, error) {
+func (e *KeyEngineMock) ListNamespace(ctx context.Context) ([]string, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -106,4 +106,4 @@ func (e *EngineMock) ListNamespace(ctx context.Context) ([]string, error) {
 	return e.NamespaceList, nil
 }
 
-var _ core.KeyEngine = &EngineMock{}
+var _ core.KeyEngine = &KeyEngineMock{}

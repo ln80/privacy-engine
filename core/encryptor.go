@@ -2,15 +2,15 @@ package core
 
 import "errors"
 
-// Errors returned by Encrypter implementations
+// Errors returned by Encryptor implementations
 var (
 	ErrEncryptionFailure = errors.New("failed to encrypt data")
 	ErrDecryptionFailure = errors.New("failed to decrypt data")
 )
 
-// Encrypter presents a service responsible for implementing encryption logic
+// Encryptor presents a service responsible for implementing encryption logic
 // based on a specific algorithm.
-type Encrypter interface {
+type Encryptor interface {
 
 	// Encrypt encrypts the given plain text values and returns a cipher text.
 	Encrypt(namespace string, key Key, plainTxt string) (cipher []byte, err error)

@@ -5,18 +5,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ln80/privacy-engine/testutil"
+	"github.com/ln80/privacy-engine/privacytest"
 )
 
 func TestTokenEngine(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("in-memory engine", func(t *testing.T) {
-		testutil.TokenEngineTestSuite(t, ctx, NewTokenEngine())
+		privacytest.RunTokenEngineTest(t, ctx, NewTokenEngine())
 	})
 
 	t.Run("in-memory cache wrapper engine", func(t *testing.T) {
 		originEngine := NewTokenEngine()
-		testutil.TokenEngineTestSuite(t, ctx, NewTokenCacheWrapper(originEngine, 20*time.Minute))
+		privacytest.RunTokenEngineTest(t, ctx, NewTokenCacheWrapper(originEngine, 20*time.Minute))
 	})
 }

@@ -7,11 +7,11 @@ import (
 	"io"
 )
 
-func getRandomBytes(size uint16) []byte {
+func getRandomBytes(size uint16) ([]byte, error) {
 	data := make([]byte, size)
 	if _, err := io.ReadFull(rand.Reader, data); err != nil {
-		panic(err)
+		return nil, err
 	}
 
-	return data
+	return data, nil
 }
