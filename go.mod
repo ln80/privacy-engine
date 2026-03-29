@@ -13,3 +13,5 @@ require (
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 )
+
+replace github.com/ln80/struct-sensitive v0.6.0 => ../struct-sensitive

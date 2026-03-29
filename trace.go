@@ -2,6 +2,7 @@ package privacy
 
 import (
 	"context"
+	"io"
 	"sync"
 	"time"
 )
@@ -34,6 +35,18 @@ func (tp *traceable) Decrypt(ctx context.Context, structPts ...interface{}) erro
 func (tp *traceable) Encrypt(ctx context.Context, structPts ...interface{}) error {
 	defer tp.markOp()
 	return tp.Protector.Encrypt(ctx, structPts...)
+}
+
+// EncryptStream implements Protector
+func (tp *traceable) EncryptStream(ctx context.Context, subID string, r io.Reader) (io.Reader, error) {
+	defer tp.markOp()
+	return tp.Protector.EncryptStream(ctx, subID, r)
+}
+
+// DecryptStream implements Protector
+func (tp *traceable) DecryptStream(ctx context.Context, subID string, r io.Reader) (io.Reader, error) {
+	defer tp.markOp()
+	return tp.Protector.DecryptStream(ctx, subID, r)
 }
 
 // Forget implements Protector

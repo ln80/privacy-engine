@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	ErrInvalidWireFormat = errors.New("invalid PII wire format")
+	ErrInvalidWireFormat = errors.New("invalid pii wire format")
 )
 
 var (

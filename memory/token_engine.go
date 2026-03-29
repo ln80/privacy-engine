@@ -16,6 +16,18 @@ type TokenEngine struct {
 	ttl   time.Duration
 }
 
+// ListTokens implements core.TokenEngine.
+func (t *TokenEngine) ListTokens(ctx context.Context, namespace string, query core.ListTokensQuery) (result *core.ListTokensResult, err error) {
+	cache := t.cacheOf(namespace)
+
+	// Get all token records from the cache
+	records := cache.getAllRecords()
+
+	return &core.ListTokensResult{
+		Tokens: records,
+	}, nil
+}
+
 var _ core.TokenEngine = &TokenEngine{}
 var _ core.TokenEngineCache = &TokenEngine{}
 
@@ -112,7 +124,7 @@ func (t *TokenEngine) Tokenize(ctx context.Context, namespace string, values []c
 		return foundValues, nil
 	}
 
-	valueTokens, err := t.origin.Tokenize(ctx, namespace, missedValues)
+	valueTokens, err := t.origin.Tokenize(ctx, namespace, missedValues, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -222,4 +234,15 @@ func (tc *tokenCache) delete(token string) error {
 	delete(tc.tokenToValue, token)
 	delete(tc.valueToToken, entry.Value)
 	return nil
+}
+
+func (tc *tokenCache) getAllRecords() []core.TokenRecord {
+	tc.mutex.Lock()
+	defer tc.mutex.Unlock()
+
+	records := []core.TokenRecord{}
+	for _, entry := range tc.tokenToValue {
+		records = append(records, entry.TokenRecord)
+	}
+	return records
 }

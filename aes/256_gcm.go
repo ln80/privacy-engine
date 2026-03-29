@@ -5,6 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"io"
 
@@ -33,13 +34,6 @@ func New256GCMEncryptor() core.Encryptor {
 
 func (e *aes256gcm) KeyGen() core.KeyGen {
 	return Key256GenFn
-}
-
-func prepareAdditionalData(namespace string) []byte {
-	if namespace == "" {
-		return nil
-	}
-	return append([]byte("ns:"), []byte(namespace)...)
 }
 
 func (e *aes256gcm) Encrypt(namespace string, key core.Key, plainTxt string) (cipherTxt []byte, err error) {
@@ -99,4 +93,146 @@ func (e *aes256gcm) Decrypt(namespace string, key core.Key, cipherTxt []byte) (p
 	}
 
 	return string(plnTxt), nil
+}
+
+func (e *aes256gcm) EncryptStream(namespace string, key core.Key, r io.Reader) (io.Reader, error) {
+	block, err := aes.NewCipher([]byte(key[:]))
+	if err != nil {
+		return nil, err
+	}
+
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
+	baseNonce := make([]byte, aead.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, baseNonce); err != nil {
+		return nil, err
+	}
+
+	pr, pw := io.Pipe()
+
+	go func() {
+		defer pw.Close()
+
+		// Write header
+		header := make([]byte, 1+len(baseNonce))
+		header[0] = 1 // version
+		copy(header[1:], baseNonce)
+
+		if _, err := pw.Write(header); err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+
+		buf := make([]byte, 4*1024*1024) // 4MB chunks
+		var chunkIndex uint64
+
+		for {
+			n, readErr := r.Read(buf)
+			if n > 0 {
+				plaintext := buf[:n]
+
+				nonce := deriveNonce(baseNonce, chunkIndex)
+				aad := prepareAdditionalData(namespaceWithChunk(namespace, chunkIndex))
+
+				ciphertext := aead.Seal(nil, nonce, plaintext, aad)
+				chunkIndex++
+
+				var lenBuf [4]byte
+				binary.BigEndian.PutUint32(lenBuf[:], uint32(len(ciphertext)))
+
+				if _, err := pw.Write(lenBuf[:]); err != nil {
+					pw.CloseWithError(err)
+					return
+				}
+				if _, err := pw.Write(ciphertext); err != nil {
+					pw.CloseWithError(err)
+					return
+				}
+			}
+
+			if readErr == io.EOF {
+				return
+			}
+			if readErr != nil {
+				pw.CloseWithError(readErr)
+				return
+			}
+		}
+	}()
+
+	return pr, nil
+}
+
+func (e *aes256gcm) DecryptStream(namespace string, key core.Key, r io.Reader) (io.Reader, error) {
+	block, err := aes.NewCipher([]byte(key[:]))
+	if err != nil {
+		return nil, err
+	}
+
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
+	// Read header
+	header := make([]byte, 1+aead.NonceSize())
+	if _, err := io.ReadFull(r, header); err != nil {
+		return nil, err
+	}
+
+	version := header[0]
+	if version != 1 {
+		return nil, errors.New("unsupported version")
+	}
+
+	baseNonce := header[1:]
+
+	pr, pw := io.Pipe()
+
+	go func() {
+		defer pw.Close()
+
+		var chunkIndex uint64
+
+		for {
+			var lenBuf [4]byte
+			_, err := io.ReadFull(r, lenBuf[:])
+			if err == io.EOF {
+				return
+			}
+			if err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+
+			chunkLen := binary.BigEndian.Uint32(lenBuf[:])
+			ciphertext := make([]byte, chunkLen)
+
+			if _, err := io.ReadFull(r, ciphertext); err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+
+			nonce := deriveNonce(baseNonce, chunkIndex)
+			aad := prepareAdditionalData(namespaceWithChunk(namespace, chunkIndex))
+
+			plaintext, err := aead.Open(nil, nonce, ciphertext, aad)
+			if err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+
+			chunkIndex++
+
+			if _, err := pw.Write(plaintext); err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+		}
+	}()
+
+	return pr, nil
 }
