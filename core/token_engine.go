@@ -8,11 +8,12 @@ import (
 )
 
 var (
-	ErrTokenNotFound        = errors.New("token not found")
-	ErrTokenGenFuncNotFound = errors.New("token gen function is not found")
-	ErrDetokenizeFailure    = errors.New("failed to detokenize token(s)")
-	ErrTokenizeFailure      = errors.New("failed to tokenize value(s)")
-	ErrDeleteTokenFailure   = errors.New("failed to delete token")
+	ErrTokenNotFound             = errors.New("token not found")
+	ErrTokenGenFuncNotFound      = errors.New("token gen function is not found")
+	ErrDetokenizeFailure         = errors.New("failed to detokenize token(s)")
+	ErrTokenizeFailure           = errors.New("failed to tokenize value(s)")
+	ErrDeleteTokenFailure        = errors.New("failed to delete token")
+	ErrTokenEngineNotConfigured  = errors.New("token engine is not configured")
 )
 
 // TokenData presents a sensitive data that should be tokenized.

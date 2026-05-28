@@ -10,7 +10,7 @@ import (
 // It tells the associated Protector instance to immediately clear the cache of encryption materials.
 type FactoryClearFunc func()
 
-// FactoryNewFunc is used by the Factory service to create Perotector instance per namespace.
+// FactoryNewFunc is used by the Factory service to create Protector instance per namespace.
 type FactoryNewFunc func(namespace string) Protector
 
 // Factory manages and maintains a registry of Protector services.
@@ -38,9 +38,14 @@ type FactoryConfig struct {
 	MonitorPeriod time.Duration
 }
 
+type registryEntry struct {
+	protector  Protector
+	lastUsedAt time.Time
+}
+
 type factory struct {
 	mu           sync.RWMutex
-	reg          map[string]Protector
+	reg          map[string]*registryEntry
 	newProtector FactoryNewFunc
 	*FactoryConfig
 }
@@ -54,7 +59,7 @@ func NewFactory(newProt FactoryNewFunc, opts ...func(*FactoryConfig)) Factory {
 	}
 
 	f := &factory{
-		reg:          make(map[string]Protector),
+		reg:          make(map[string]*registryEntry),
 		newProtector: newProt,
 		FactoryConfig: &FactoryConfig{
 			IDLE:          20 * time.Minute,
@@ -77,33 +82,31 @@ func (f *factory) Instance(namespace string) (Protector, FactoryClearFunc) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if _, ok := f.reg[namespace]; !ok {
-		// Wraps the returned protector to track its activities
-		tp := &traceable{Protector: f.newProtector(namespace)}
-		f.reg[namespace] = tp
-		tp.markOp()
+	entry, ok := f.reg[namespace]
+	if !ok {
+		entry = &registryEntry{
+			protector:  f.newProtector(namespace),
+			lastUsedAt: time.Now(),
+		}
+		f.reg[namespace] = entry
+	}
+	entry.lastUsedAt = time.Now()
+
+	clearFunc := func() {
+		_ = f.reg[namespace].protector.Clear(context.Background(), true)
 	}
 
-	FactoryClearFunc := func() {
-		// Force Protector to clear cache without considering the current context.
-		// Ignore the returned error, which unlikely to occur.
-		_ = f.reg[namespace].Clear(context.Background(), true)
-	}
-
-	return f.reg[namespace], FactoryClearFunc
+	return entry.protector, clearFunc
 }
 
 func (f *factory) clear(ctx context.Context, force bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	for nspace, p := range f.reg {
-		// clear protector encryption materials cache
-		_ = p.Clear(ctx, force)
+	for nspace, entry := range f.reg {
+		_ = entry.protector.Clear(ctx, force)
 
-		// remove inactive protectors based on last activity timestamp
-		tp, ok := p.(*traceable)
-		if t := tp.lastOpsAt; ok && !t.IsZero() && t.Add(f.IDLE).Before(time.Now()) || force {
+		if force || (!entry.lastUsedAt.IsZero() && entry.lastUsedAt.Add(f.IDLE).Before(time.Now())) {
 			delete(f.reg, nspace)
 		}
 	}
@@ -114,8 +117,6 @@ func (f *factory) Monitor(ctx context.Context) {
 	ticker := time.NewTicker(f.MonitorPeriod)
 	go func() {
 		defer func() {
-			// Use a timed-out context to ensure the original context cancellation
-			// will not prevent clearing the cache.
 			clearCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 			f.clear(clearCtx, true)
 			cancel()

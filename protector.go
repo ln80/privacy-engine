@@ -2,6 +2,8 @@ package privacy
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +14,7 @@ import (
 	"github.com/ln80/privacy-engine/core"
 	"github.com/ln80/privacy-engine/memory"
 	sensitive "github.com/ln80/struct-sensitive"
+	"golang.org/x/crypto/hkdf"
 )
 
 // Errors returned by Protector service
@@ -48,6 +51,18 @@ type Protector interface {
 	// DecryptStream reads ciphertext from r and returns a reader of plaintext.
 	// subID selects the decryption key within the namespace.
 	DecryptStream(ctx context.Context, subID string, r io.Reader) (io.Reader, error)
+
+	// DeriveSubjectKey derives a purpose-scoped key from the subject's DEK without exposing it.
+	// purpose is mixed into the derivation (e.g. a client ref hash for attachments).
+	DeriveSubjectKey(ctx context.Context, subID, purpose string) (core.Key, error)
+
+	// EncryptStreamWithKey encrypts plaintext from r using the provided key,
+	// bypassing the KeyEngine lookup.
+	EncryptStreamWithKey(ctx context.Context, key core.Key, r io.Reader) (io.Reader, error)
+
+	// DecryptStreamWithKey decrypts ciphertext from r using the provided key,
+	// bypassing the KeyEngine lookup.
+	DecryptStreamWithKey(ctx context.Context, key core.Key, r io.Reader) (io.Reader, error)
 
 	// Forget removes the associated encryption materials of the given subject,
 	// and crypto-erases its Personal data.
@@ -351,7 +366,66 @@ func (p *protector) DecryptStream(ctx context.Context, subID string, r io.Reader
 	return p.Encryptor.DecryptStream(p.namespace, key, r)
 }
 
-// Encrypt implements Protector
+func (p *protector) DeriveSubjectKey(ctx context.Context, subID, purpose string) (key core.Key, err error) {
+	defer func() {
+		if err != nil {
+			err = ErrEncryptDecryptFailure.
+				withBase(err).
+				withNamespace(p.namespace)
+		}
+	}()
+
+	if subID == "" {
+		return nil, errors.New("empty subject id")
+	}
+
+	keys, err := p.KeyEngine.GetKeys(ctx, p.namespace, []string{subID})
+	if err != nil {
+		return nil, err
+	}
+
+	parentKey, ok := keys[subID]
+	if !ok {
+		return nil, ErrSubjectForgotten.withSubject(subID)
+	}
+
+	info := make([]byte, 2+len(subID)+len(purpose))
+	binary.BigEndian.PutUint16(info, uint16(len(subID)))
+	copy(info[2:], subID)
+	copy(info[2+len(subID):], purpose)
+	r := hkdf.New(sha256.New, parentKey, []byte("privacy-engine-v1"), info)
+	derived := make([]byte, 32)
+	if _, err = io.ReadFull(r, derived); err != nil {
+		return nil, err
+	}
+	return core.Key(derived), nil
+}
+
+func (p *protector) EncryptStreamWithKey(ctx context.Context, key core.Key, r io.Reader) (out io.Reader, err error) {
+	defer func() {
+		if err != nil {
+			err = ErrEncryptDecryptFailure.
+				withBase(err).
+				withNamespace(p.namespace)
+		}
+	}()
+
+	return p.Encryptor.EncryptStream(p.namespace, key, r)
+}
+
+func (p *protector) DecryptStreamWithKey(ctx context.Context, key core.Key, r io.Reader) (out io.Reader, err error) {
+	defer func() {
+		if err != nil {
+			err = ErrEncryptDecryptFailure.
+				withBase(err).
+				withNamespace(p.namespace)
+		}
+	}()
+
+	return p.Encryptor.DecryptStream(p.namespace, key, r)
+}
+
+// Forget implements Protector.
 func (p *protector) Forget(ctx context.Context, subID string) (err error) {
 
 	defer func() {
@@ -372,7 +446,7 @@ func (p *protector) Forget(ctx context.Context, subID string) (err error) {
 	return
 }
 
-// Encrypt implements Protector
+// Recover implements Protector.
 func (p *protector) Recover(ctx context.Context, subID string) (err error) {
 	defer func() {
 		if err != nil {
@@ -395,7 +469,7 @@ func (p *protector) Recover(ctx context.Context, subID string) (err error) {
 	return
 }
 
-// Encrypt implements Protector
+// Clear implements Protector.
 func (p *protector) Clear(ctx context.Context, force bool) (err error) {
 	defer func() {
 		if err != nil {
@@ -407,13 +481,15 @@ func (p *protector) Clear(ctx context.Context, force bool) (err error) {
 	}()
 
 	if cp, ok := p.KeyEngine.(core.KeyEngineCache); ok {
-		err = cp.ClearCache(ctx, p.namespace, force)
-		return
+		if e := cp.ClearCache(ctx, p.namespace, force); e != nil {
+			err = e
+		}
 	}
 
 	if cp, ok := p.TokenEngine.(core.TokenEngineCache); ok {
-		err = cp.ClearCache(ctx, p.namespace, force)
-		return
+		if e := cp.ClearCache(ctx, p.namespace, force); e != nil {
+			err = errors.Join(err, e)
+		}
 	}
 
 	return
@@ -422,7 +498,7 @@ func (p *protector) Clear(ctx context.Context, force bool) (err error) {
 // Detokenize implements Protector.
 func (p *protector) Detokenize(ctx context.Context, tokens []string) (core.TokenValueMap, error) {
 	if p.TokenEngine == nil {
-		panic("unsupported action. token engine not found")
+		return nil, core.ErrTokenEngineNotConfigured
 	}
 	return p.TokenEngine.Detokenize(ctx, p.namespace, tokens)
 }
@@ -430,14 +506,14 @@ func (p *protector) Detokenize(ctx context.Context, tokens []string) (core.Token
 // Tokenize implements Protector.
 func (p *protector) Tokenize(ctx context.Context, values []core.TokenData, opts ...func(*core.TokenizeConfig)) (core.ValueTokenMap, error) {
 	if p.TokenEngine == nil {
-		panic("unsupported action. Token engine is not found")
+		return nil, core.ErrTokenEngineNotConfigured
 	}
 	return p.TokenEngine.Tokenize(ctx, p.namespace, values, opts...)
 }
 
 func (p *protector) DeleteToken(ctx context.Context, token string) error {
 	if p.TokenEngine == nil {
-		panic("unsupported action. Token engine is not found")
+		return core.ErrTokenEngineNotConfigured
 	}
 	return p.TokenEngine.DeleteToken(ctx, p.namespace, token)
 }
@@ -445,7 +521,7 @@ func (p *protector) DeleteToken(ctx context.Context, token string) error {
 // ListTokens implements Protector.
 func (p *protector) ListTokens(ctx context.Context, query core.ListTokensQuery) (result *core.ListTokensResult, err error) {
 	if p.TokenEngine == nil {
-		panic("unsupported action. Token engine is not found")
+		return nil, core.ErrTokenEngineNotConfigured
 	}
 	return p.TokenEngine.ListTokens(ctx, p.namespace, query)
 }

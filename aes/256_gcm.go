@@ -14,14 +14,13 @@ import (
 
 const (
 	aES265KeySize = 32
+	maxChunkSize  = 4*1024*1024 + 28 // 4MB plaintext + GCM overhead
 )
 
-func Key256GenFn(ctx context.Context, namespace, subID string) (string, error) {
-	d, err := getRandomBytes(aES265KeySize)
-	if err != nil {
-		return "", err
-	}
-	return string(d), nil
+var errStreamTruncated = errors.New("encrypted stream truncated: missing end-of-stream marker")
+
+func Key256GenFn(ctx context.Context, namespace, subID string) ([]byte, error) {
+	return getRandomBytes(aES265KeySize)
 }
 
 type aes256gcm struct{}
@@ -43,7 +42,7 @@ func (e *aes256gcm) Encrypt(namespace string, key core.Key, plainTxt string) (ci
 		}
 	}()
 
-	block, err := aes.NewCipher([]byte(key[:]))
+	block, err := aes.NewCipher([]byte(key))
 	if err != nil {
 		return
 	}
@@ -76,7 +75,7 @@ func (e *aes256gcm) Decrypt(namespace string, key core.Key, cipherTxt []byte) (p
 		}
 	}()
 
-	block, err := aes.NewCipher([]byte(key[:]))
+	block, err := aes.NewCipher([]byte(key))
 	if err != nil {
 		return
 	}
@@ -96,7 +95,7 @@ func (e *aes256gcm) Decrypt(namespace string, key core.Key, cipherTxt []byte) (p
 }
 
 func (e *aes256gcm) EncryptStream(namespace string, key core.Key, r io.Reader) (io.Reader, error) {
-	block, err := aes.NewCipher([]byte(key[:]))
+	block, err := aes.NewCipher([]byte(key))
 	if err != nil {
 		return nil, err
 	}
@@ -154,6 +153,10 @@ func (e *aes256gcm) EncryptStream(namespace string, key core.Key, r io.Reader) (
 			}
 
 			if readErr == io.EOF {
+				var endMarker [4]byte
+				if _, err := pw.Write(endMarker[:]); err != nil {
+					pw.CloseWithError(err)
+				}
 				return
 			}
 			if readErr != nil {
@@ -167,7 +170,7 @@ func (e *aes256gcm) EncryptStream(namespace string, key core.Key, r io.Reader) (
 }
 
 func (e *aes256gcm) DecryptStream(namespace string, key core.Key, r io.Reader) (io.Reader, error) {
-	block, err := aes.NewCipher([]byte(key[:]))
+	block, err := aes.NewCipher([]byte(key))
 	if err != nil {
 		return nil, err
 	}
@@ -201,6 +204,7 @@ func (e *aes256gcm) DecryptStream(namespace string, key core.Key, r io.Reader) (
 			var lenBuf [4]byte
 			_, err := io.ReadFull(r, lenBuf[:])
 			if err == io.EOF {
+				pw.CloseWithError(errStreamTruncated)
 				return
 			}
 			if err != nil {
@@ -209,6 +213,13 @@ func (e *aes256gcm) DecryptStream(namespace string, key core.Key, r io.Reader) (
 			}
 
 			chunkLen := binary.BigEndian.Uint32(lenBuf[:])
+			if chunkLen == 0 {
+				return
+			}
+			if chunkLen > maxChunkSize {
+				pw.CloseWithError(errors.New("chunk size exceeds maximum"))
+				return
+			}
 			ciphertext := make([]byte, chunkLen)
 
 			if _, err := io.ReadFull(r, ciphertext); err != nil {
