@@ -1,19 +1,13 @@
-# DOCKER_NETWORK = lambda-local
+.PHONY: lint security test test/cov_html test/cov_total bench bench/profile doc
 
-# DYNAMODB_PORT  = 8070
-# DYNAMODB_VOLUME = dynamodb-local-v2.0
-
-# KMS_PORT  = 8090
-
-# export DYNAMODB_ENDPOINT = http://localhost:$(DYNAMODB_PORT)
-# export KMS_ENDPOINT = http://localhost:$(KMS_PORT)
-
-.PHONY: lint
 lint:
 	golangci-lint run --enable misspell
 
+security:
+	gosec -exclude-dir=privacytest ./...
+
 test:
-	packages=`go list ./... | grep -v privacytest`; \
+	packages=$$(go list ./... | grep -v privacytest); \
 	go test -race -cover $$packages -coverprofile coverage.out -covermode atomic
 
 test/cov_html:

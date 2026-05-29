@@ -29,7 +29,7 @@ func deriveNonce(base []byte, counter uint64) []byte {
 	copy(nonce, base)
 
 	for i := 0; i < 8; i++ {
-		nonce[len(nonce)-1-i] ^= byte(counter >> (8 * i))
+		nonce[len(nonce)-1-i] ^= byte(counter >> (8 * i)) // #nosec G115 -- intentional byte extraction
 	}
 
 	return nonce

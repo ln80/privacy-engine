@@ -378,6 +378,9 @@ func (p *protector) DeriveSubjectKey(ctx context.Context, subID, purpose string)
 	if subID == "" {
 		return nil, errors.New("empty subject id")
 	}
+	if len(subID) > 1<<16-1 {
+		return nil, errors.New("subject id too long")
+	}
 
 	keys, err := p.KeyEngine.GetKeys(ctx, p.namespace, []string{subID})
 	if err != nil {
@@ -390,7 +393,7 @@ func (p *protector) DeriveSubjectKey(ctx context.Context, subID, purpose string)
 	}
 
 	info := make([]byte, 2+len(subID)+len(purpose))
-	binary.BigEndian.PutUint16(info, uint16(len(subID)))
+	binary.BigEndian.PutUint16(info, uint16(len(subID))) // #nosec G115 -- length validated above
 	copy(info[2:], subID)
 	copy(info[2+len(subID):], purpose)
 	r := hkdf.New(sha256.New, parentKey, []byte("privacy-engine-v1"), info)

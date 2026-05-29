@@ -28,7 +28,7 @@ func Example() {
 	newProtector := func(namespace string) privacy.Protector {
 		return privacy.NewProtector(namespace, memory.NewKeyEngine(), func(pc *privacy.ProtectorConfig) {
 			// Token engine is optional.
-			// if not provided, the protector service will panic when trying to Tokenize/Detokenize sensitive data
+			// If not provided, tokenization methods return core.ErrTokenEngineNotConfigured.
 			pc.TokenEngine = memory.NewTokenEngine()
 
 			// If cache is enabled then the service will decorates engines
@@ -88,8 +88,8 @@ func Example() {
 
 	// Encrypted Output ex:
 	// Profile{
-	//  Email: "<pii::NDQ1ZDRhYTMtNWUwNS00MDcxLWEwNzAtMDlhMTM5MTFkM2Ex:7Q61HTCUT+XZtzzGp3HsVoHk6o74kwdEHqY46kB4eflXnRwswgHRVlApRg7mp4bNH5zSppV2u40=",
-	//  Fullname: "<pii::NDQ1ZDRhYTMtNWUwNS00MDcxLWEwNzAtMDlhMTM5MTFkM2Ex:mNyZmcvUHTAKTMC+uY6f77bJ3sZ5+NYBZwWKj8zZ0sA4j8mOPz8188sV",
+	//  Email: "ENC..NDQ1ZDRhYTMtNWUwNS00MDcxLWEwNzAtMDlhMTM5MTFkM2Ex.7Q61HTCUT+XZtzzGp3HsVoHk6o74kwdEHqY46kB4eflXnRwswgHRVlApRg7mp4bNH5zSppV2u40=",
+	//  Fullname: "ENC..NDQ1ZDRhYTMtNWUwNS00MDcxLWEwNzAtMDlhMTM5MTFkM2Ex.mNyZmcvUHTAKTMC+uY6f77bJ3sZ5+NYBZwWKj8zZ0sA4j8mOPz8188sV",
 	// 	Role: "Teacher",
 	// }
 

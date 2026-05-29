@@ -113,7 +113,7 @@ func (e *aes256gcm) EncryptStream(namespace string, key core.Key, r io.Reader) (
 	pr, pw := io.Pipe()
 
 	go func() {
-		defer pw.Close()
+		defer pw.CloseWithError(nil) //nolint:errcheck // CloseWithError always returns nil
 
 		// Write header
 		header := make([]byte, 1+len(baseNonce))
@@ -140,7 +140,7 @@ func (e *aes256gcm) EncryptStream(namespace string, key core.Key, r io.Reader) (
 				chunkIndex++
 
 				var lenBuf [4]byte
-				binary.BigEndian.PutUint32(lenBuf[:], uint32(len(ciphertext)))
+				binary.BigEndian.PutUint32(lenBuf[:], uint32(len(ciphertext))) // #nosec G115 -- ciphertext bounded by 4MB chunk size
 
 				if _, err := pw.Write(lenBuf[:]); err != nil {
 					pw.CloseWithError(err)
@@ -196,7 +196,7 @@ func (e *aes256gcm) DecryptStream(namespace string, key core.Key, r io.Reader) (
 	pr, pw := io.Pipe()
 
 	go func() {
-		defer pw.Close()
+		defer pw.CloseWithError(nil) //nolint:errcheck // CloseWithError always returns nil
 
 		var chunkIndex uint64
 
