@@ -1,9 +1,13 @@
-.PHONY: lint
+.PHONY: lint security test test/cov_html test/cov_total bench bench/profile doc
+
 lint:
 	golangci-lint run --enable misspell
 
+security:
+	gosec -exclude-dir=privacytest ./...
+
 test:
-	packages=`go list ./... | grep -v privacytest`; \
+	packages=$$(go list ./... | grep -v privacytest); \
 	go test -race -cover $$packages -coverprofile coverage.out -covermode atomic
 
 test/cov_html:
