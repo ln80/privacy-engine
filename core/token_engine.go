@@ -8,11 +8,12 @@ import (
 )
 
 var (
-	ErrTokenNotFound        = errors.New("token not found")
-	ErrTokenGenFuncNotFound = errors.New("token gen function is not found")
-	ErrDetokenizeFailure    = errors.New("failed to detokenize token(s)")
-	ErrTokenizeFailure      = errors.New("failed to tokenize value(s)")
-	ErrDeleteTokenFailure   = errors.New("failed to delete token")
+	ErrTokenNotFound             = errors.New("token not found")
+	ErrTokenGenFuncNotFound      = errors.New("token gen function is not found")
+	ErrDetokenizeFailure         = errors.New("failed to detokenize token(s)")
+	ErrTokenizeFailure           = errors.New("failed to tokenize value(s)")
+	ErrDeleteTokenFailure        = errors.New("failed to delete token")
+	ErrTokenEngineNotConfigured  = errors.New("token engine is not configured")
 )
 
 // TokenData presents a sensitive data that should be tokenized.
@@ -68,6 +69,7 @@ type TokenRecord struct {
 }
 
 type TokenizeConfig struct {
+	Prefix       string
 	TokenGenFunc func(ctx context.Context, namespace string, data TokenData) (string, error)
 }
 
@@ -89,6 +91,22 @@ type TokenEngine interface {
 
 	// DeleteToken deletes the token from the storage. The next call of TOkenize will generates a new one.
 	DeleteToken(ctx context.Context, namespace string, token string) error
+
+	// ListTokens returns a set of tokens associated with the given namespace.
+	// It returns a cursor to the next page of results.
+	ListTokens(ctx context.Context, namespace string, query ListTokensQuery) (result *ListTokensResult, err error)
+}
+
+type ListTokensQuery struct {
+	Prefix     string
+	SearchText string
+	Limit      int
+	Cursor     *string
+}
+
+type ListTokensResult struct {
+	Tokens []TokenRecord
+	Cursor *string
 }
 
 // TokenEngineCache is a TokenEngine wrapper used for cache purposes.

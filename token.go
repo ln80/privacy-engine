@@ -12,3 +12,9 @@ func TokenDataSlice(values ...string) []core.TokenData {
 	}
 	return tokenValues
 }
+
+func WithPrefix(prefix string) func(*core.TokenizeConfig) {
+	return func(tc *core.TokenizeConfig) {
+		tc.Prefix = prefix
+	}
+}

@@ -19,20 +19,28 @@ var (
 
 // Encryption key lifecycle states.
 const (
-	StateActive   = "ACTIVE"
-	StateDisabled = "DISABLED"
-	StateDeleted  = "DELETED"
+	StateActive   KeyState = "ACTIVE"
+	StateDisabled KeyState = "DISABLED"
+	StateDeleted  KeyState = "DELETED"
 )
 
 // KeyState presents encryption key lifecycle states
 type KeyState string
 
-// Key presents the plain text value of an encryption key
-type Key string
+// Key presents the plain text value of an encryption key.
+// It is a []byte so the backing memory can be zeroed after use.
+type Key []byte
 
 // String overwrites the default to string behavior to protect the key sensitive value.
 func (k Key) String() string {
 	return "KEY-*****"
+}
+
+// ZeroKey overwrites the key's backing memory with zeros.
+func ZeroKey(k Key) {
+	for i := range k {
+		k[i] = 0
+	}
 }
 
 // KeyMap presents a map of Keys indexed by keyID.
@@ -59,7 +67,7 @@ type IDKey struct {
 }
 
 // NewIDKey returns new IdKey value of the given Key and ID.
-func NewIDKey(id, key string) IDKey {
+func NewIDKey(id string, key []byte) IDKey {
 	return IDKey{
 		id, Key(key),
 	}
@@ -74,7 +82,7 @@ func (ik IDKey) Key() Key {
 }
 
 // KeyGen presents a function used by Key engines to generate keys
-type KeyGen func(ctx context.Context, namespace, keyID string) (string, error)
+type KeyGen func(ctx context.Context, namespace, keyID string) ([]byte, error)
 
 // KeyEngineConfig presents the basic configuration of KeyEngine
 // Implementations may extend it and add specific configuration.

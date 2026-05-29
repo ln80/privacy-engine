@@ -16,6 +16,18 @@ type TokenEngine struct {
 	ttl   time.Duration
 }
 
+// ListTokens implements core.TokenEngine.
+func (t *TokenEngine) ListTokens(ctx context.Context, namespace string, query core.ListTokensQuery) (result *core.ListTokensResult, err error) {
+	cache := t.cacheOf(namespace)
+
+	// Get all token records from the cache
+	records := cache.getAllRecords()
+
+	return &core.ListTokensResult{
+		Tokens: records,
+	}, nil
+}
+
 var _ core.TokenEngine = &TokenEngine{}
 var _ core.TokenEngineCache = &TokenEngine{}
 
@@ -112,7 +124,7 @@ func (t *TokenEngine) Tokenize(ctx context.Context, namespace string, values []c
 		return foundValues, nil
 	}
 
-	valueTokens, err := t.origin.Tokenize(ctx, namespace, missedValues)
+	valueTokens, err := t.origin.Tokenize(ctx, namespace, missedValues, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -139,9 +151,15 @@ func (t *TokenEngine) ClearCache(ctx context.Context, namespace string, force bo
 }
 
 func (e *TokenEngine) cacheOf(namespace string) *tokenCache {
+	e.mu.RLock()
+	if tc, ok := e.cache[namespace]; ok {
+		e.mu.RUnlock()
+		return tc
+	}
+	e.mu.RUnlock()
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
-
 	if _, ok := e.cache[namespace]; !ok {
 		e.cache[namespace] = newTokenCache(namespace)
 	}
@@ -169,16 +187,16 @@ func newTokenCache(namespace string) *tokenCache {
 }
 
 func (tc *tokenCache) value(token string) (core.TokenData, bool) {
-	tc.mutex.Lock()
-	defer tc.mutex.Unlock()
+	tc.mutex.RLock()
+	defer tc.mutex.RUnlock()
 
 	entry, ok := tc.tokenToValue[token]
 	return entry.Value, ok
 }
 
 func (tc *tokenCache) token(value core.TokenData) (string, bool) {
-	tc.mutex.Lock()
-	defer tc.mutex.Unlock()
+	tc.mutex.RLock()
+	defer tc.mutex.RUnlock()
 
 	entry, ok := tc.valueToToken[value]
 	return entry.Token, ok
@@ -222,4 +240,15 @@ func (tc *tokenCache) delete(token string) error {
 	delete(tc.tokenToValue, token)
 	delete(tc.valueToToken, entry.Value)
 	return nil
+}
+
+func (tc *tokenCache) getAllRecords() []core.TokenRecord {
+	tc.mutex.RLock()
+	defer tc.mutex.RUnlock()
+
+	records := []core.TokenRecord{}
+	for _, entry := range tc.tokenToValue {
+		records = append(records, entry.TokenRecord)
+	}
+	return records
 }

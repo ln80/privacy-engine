@@ -74,13 +74,18 @@ func NewCacheWrapper(origin core.KeyEngine, ttl time.Duration) core.KeyEngine {
 }
 
 func (e *engine) cacheOf(namespace string) map[string]keyCache {
+	e.mu.RLock()
+	if c, ok := e.cache[namespace]; ok {
+		e.mu.RUnlock()
+		return c
+	}
+	e.mu.RUnlock()
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
-
 	if _, ok := e.cache[namespace]; !ok {
 		e.cache[namespace] = make(map[string]keyCache)
 	}
-
 	return e.cache[namespace]
 }
 
@@ -91,15 +96,12 @@ func (e *engine) GetKeys(ctx context.Context, namespace string, keyIDs []string)
 	foundKeys := core.NewKeyMap()
 	missedKeys := []string{}
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
+	e.mu.RLock()
 	for _, keyID := range keyIDs {
 		if key, ok := cache[keyID]; ok {
 			if key.State != core.StateActive {
 				continue
 			}
-
 			foundKeys[keyID] = key.Key
 		} else {
 			if e.origin != nil {
@@ -107,16 +109,19 @@ func (e *engine) GetKeys(ctx context.Context, namespace string, keyIDs []string)
 			}
 		}
 	}
+	e.mu.RUnlock()
 
-	if e.origin != nil {
+	if e.origin != nil && len(missedKeys) > 0 {
 		keys, err := e.origin.GetKeys(ctx, namespace, missedKeys)
 		if err != nil {
 			return nil, err
 		}
+		e.mu.Lock()
 		for keyID, k := range keys {
 			foundKeys[keyID] = k
 			cache[keyID] = newKeyCache(keyID, k)
 		}
+		e.mu.Unlock()
 	}
 
 	return foundKeys, nil
@@ -166,9 +171,9 @@ func (e *engine) GetOrCreateKeys(ctx context.Context, namespace string, keyIDs [
 			if err != nil {
 				return nil, errors.Join(core.ErrPersistKeyFailure, err)
 			}
-			keys[keyID] = core.Key(newKey)
-
-			cache[keyID] = newKeyCache(keyID, core.Key(newKey))
+			k := core.Key(newKey)
+			keys[keyID] = k
+			cache[keyID] = newKeyCache(keyID, k)
 		}
 	}
 
@@ -251,7 +256,8 @@ func (e *engine) DeleteKey(ctx context.Context, namespace, keyID string) error {
 		return nil
 	}
 
-	keyCache.Key = ""
+	core.ZeroKey(keyCache.Key)
+	keyCache.Key = nil
 	keyCache.State = core.StateDeleted
 	cache[keyID] = keyCache
 
@@ -277,6 +283,7 @@ func (e *engine) ClearCache(ctx context.Context, namespace string, force bool) e
 
 	for keyID, k := range cache {
 		if expired := k.At+int64(e.ttl.Seconds()) < time.Now().Unix(); expired || force {
+			core.ZeroKey(k.Key)
 			delete(cache, keyID)
 		}
 	}
@@ -285,8 +292,11 @@ func (e *engine) ClearCache(ctx context.Context, namespace string, force bool) e
 }
 
 // DeleteUnusedKeys implements core.KeyEngine
-func (*engine) DeleteUnusedKeys(ctx context.Context, namespace string) error {
-	panic("unimplemented")
+func (e *engine) DeleteUnusedKeys(ctx context.Context, namespace string) error {
+	if e.origin != nil {
+		return e.origin.DeleteUnusedKeys(ctx, namespace)
+	}
+	return nil
 }
 
 // Origin implements core.KeyEngineCache

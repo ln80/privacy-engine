@@ -69,7 +69,7 @@ func Example() {
 	// Assuming the example function is a system entrypoint, an important step is
 	// to tokenize the user canonical identifier (i.e., the email address)
 	// as soon as possible in the process and use the token as a surrogate ID
-	tokens, err := protector.Tokenize(ctx, tenant, privacy.TokenDataSlice(p.Email))
+	tokens, err := protector.Tokenize(ctx, privacy.TokenDataSlice(p.Email), privacy.WithPrefix("sub_"))
 	if err != nil {
 		log.Fatal(err)
 	}

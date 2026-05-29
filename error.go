@@ -58,16 +58,10 @@ func (e Error) withBase(err error) Error {
 }
 
 // Error implements error interface.
+// It intentionally omits namespace and subject to avoid leaking identifiers in logs or API responses.
+// Use Namespace() and Subject() for structured access in internal debugging.
 func (e Error) Error() string {
-	str := "" + e.msg
-	if n := e.Namespace(); n != "" {
-		str += " [ns:'" + n + "']"
-
-	}
-
-	if s := e.Subject(); s != "" {
-		str += " [sub:'" + s + "']"
-	}
+	str := e.msg
 
 	if e.Err != nil {
 		str += ": " + e.Err.Error()
