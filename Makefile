@@ -1,13 +1,3 @@
-# DOCKER_NETWORK = lambda-local
-
-# DYNAMODB_PORT  = 8070
-# DYNAMODB_VOLUME = dynamodb-local-v2.0
-
-# KMS_PORT  = 8090
-
-# export DYNAMODB_ENDPOINT = http://localhost:$(DYNAMODB_PORT)
-# export KMS_ENDPOINT = http://localhost:$(KMS_PORT)
-
 .PHONY: lint
 lint:
 	golangci-lint run --enable misspell
