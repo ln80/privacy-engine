@@ -299,6 +299,29 @@ func (e *engine) DeleteUnusedKeys(ctx context.Context, namespace string) error {
 	return nil
 }
 
+// PurgeNamespace implements core.KeyEngine
+func (e *engine) PurgeNamespace(ctx context.Context, namespace string) error {
+	if e.origin != nil {
+		if err := e.origin.PurgeNamespace(ctx, namespace); err != nil {
+			return err
+		}
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	cache, ok := e.cache[namespace]
+	if !ok {
+		return nil
+	}
+	for keyID, k := range cache {
+		core.ZeroKey(k.Key)
+		delete(cache, keyID)
+	}
+	delete(e.cache, namespace)
+	return nil
+}
+
 // Origin implements core.KeyEngineCache
 func (e *engine) Origin() core.KeyEngine {
 	return e.origin

@@ -169,4 +169,55 @@ func RunKeyEngineTest(t *testing.T, ctx context.Context, eng core.KeyEngine, opt
 			t.Fatalf("expect err be %v, got: %v", want, err)
 		}
 	}
+
+	// Test PurgeNamespace: create keys in two namespaces, purge one, assert
+	// the other is intact, purged IDs can be recreated, and purge is idempotent.
+	otherNS := namespace + "-other"
+	otherKeys, err := eng.GetOrCreateKeys(ctx, otherNS, keyIDs, nil)
+	if err != nil {
+		t.Fatalf("expect err be nil, got: %v", err)
+	}
+	if want, got := keyIDs, otherKeys.KeyIDs(); !keysEqual(want, got) {
+		t.Fatalf("expect %v, %v be equals", want, got)
+	}
+
+	// Ensure the primary namespace has at least one active key for the purge assert.
+	_, err = eng.GetOrCreateKeys(ctx, namespace, keyIDs[2:], nil)
+	if err != nil {
+		t.Fatalf("expect err be nil, got: %v", err)
+	}
+
+	if want, err := nilErr, eng.PurgeNamespace(ctx, namespace); !errors.Is(err, want) {
+		t.Fatalf("expect err be %v, got: %v", want, err)
+	}
+	// Idempotent
+	if want, err := nilErr, eng.PurgeNamespace(ctx, namespace); !errors.Is(err, want) {
+		t.Fatalf("expect err be %v, got: %v", want, err)
+	}
+
+	keys, err = eng.GetKeys(ctx, namespace, keyIDs)
+	if err != nil {
+		t.Fatalf("expect err be nil, got: %v", err)
+	}
+	if want, got := empty, keys.KeyIDs(); !keysEqual(want, got) {
+		t.Fatalf("expect %v, %v be equals", want, got)
+	}
+
+	// Sibling namespace untouched
+	keys, err = eng.GetKeys(ctx, otherNS, keyIDs)
+	if err != nil {
+		t.Fatalf("expect err be nil, got: %v", err)
+	}
+	if want, got := keyIDs, keys.KeyIDs(); !keysEqual(want, got) {
+		t.Fatalf("expect %v, %v be equals", want, got)
+	}
+
+	// Purged key IDs may be recreated (hard delete, unlike soft DeleteKey)
+	keys, err = eng.GetOrCreateKeys(ctx, namespace, keyIDs[:1], nil)
+	if err != nil {
+		t.Fatalf("expect err be nil, got: %v", err)
+	}
+	if want, got := keyIDs[:1], keys.KeyIDs(); !keysEqual(want, got) {
+		t.Fatalf("expect %v, %v be equals", want, got)
+	}
 }

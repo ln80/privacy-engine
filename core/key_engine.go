@@ -14,6 +14,7 @@ var (
 	ErrReEnableKeyFailure = errors.New("failed to renable encryption key(s)")
 	ErrDisableKeyFailure  = errors.New("failed to disable encryption key")
 	ErrDeleteKeyFailure   = errors.New("failed to delete encryption key")
+	ErrPurgeKeyFailure    = errors.New("failed to purge encryption keys")
 	ErrKeyNotFound        = errors.New("encryption key not found")
 )
 
@@ -127,6 +128,12 @@ type KeyEngine interface {
 	// DeleteUnusedKeys delete unused keys which were disabled
 	// for longer or equal to the configured grace period.
 	DeleteUnusedKeys(ctx context.Context, namespace string) error
+
+	// PurgeNamespace hard-deletes every encryption key in the namespace
+	// (active, disabled, and logically deleted). Idempotent — a second
+	// call on an empty namespace is a no-op. Unlike DeleteKey, purged
+	// key IDs may be recreated by a subsequent GetOrCreateKeys.
+	PurgeNamespace(ctx context.Context, namespace string) error
 }
 
 // KeyEngineWrapper presents a wrapper on top of an existing Key engine.

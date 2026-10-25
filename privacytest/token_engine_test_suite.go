@@ -76,4 +76,47 @@ func RunTokenEngineTest(t *testing.T, ctx context.Context, eng core.TokenEngine,
 	if want, got := tokens_1, result_4; reflect.DeepEqual(want, got) {
 		t.Fatalf("expect %v, %v not be equals", want, got)
 	}
+
+	// PurgeNamespace: create tokens in a sibling namespace, purge the primary,
+	// assert sibling intact, primary empty, and purge is idempotent.
+	otherNS := namespace + "-other"
+	otherTokens, err := eng.Tokenize(ctx, otherNS, values)
+	if err != nil {
+		t.Fatalf("expect err be nil, got: %v", err)
+	}
+	if got, want := len(otherTokens), 3; got != want {
+		t.Fatalf("expect result map length be %d, got %d", want, got)
+	}
+
+	if err := eng.PurgeNamespace(ctx, namespace); err != nil {
+		t.Fatalf("expect err be nil, got: %v", err)
+	}
+	if err := eng.PurgeNamespace(ctx, namespace); err != nil {
+		t.Fatalf("expect err be nil, got: %v", err)
+	}
+
+	listed, err := eng.ListTokens(ctx, namespace, core.ListTokensQuery{})
+	if err != nil {
+		t.Fatalf("expect err be nil, got: %v", err)
+	}
+	if got, want := len(listed.Tokens), 0; got != want {
+		t.Fatalf("expect %d tokens after purge, got %d", want, got)
+	}
+
+	otherListed, err := eng.ListTokens(ctx, otherNS, core.ListTokensQuery{})
+	if err != nil {
+		t.Fatalf("expect err be nil, got: %v", err)
+	}
+	if got, want := len(otherListed.Tokens), 3; got != want {
+		t.Fatalf("expect sibling namespace keep %d tokens, got %d", want, got)
+	}
+
+	// Fresh tokens can be created after purge
+	fresh, err := eng.Tokenize(ctx, namespace, values[:1])
+	if err != nil {
+		t.Fatalf("expect err be nil, got: %v", err)
+	}
+	if got, want := len(fresh), 1; got != want {
+		t.Fatalf("expect result map length be %d, got %d", want, got)
+	}
 }
