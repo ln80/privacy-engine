@@ -333,6 +333,69 @@ func TestProtector_EncryptDecrypt(t *testing.T) {
 	})
 }
 
+func TestProtector_Purge(t *testing.T) {
+	ctx := context.Background()
+	nspace := "tenant-purge-test"
+
+	keyEng := memory.NewKeyEngine()
+	tokenEng := memory.NewTokenEngine()
+	p := NewProtector(nspace, keyEng, func(pc *ProtectorConfig) {
+		pc.TokenEngine = tokenEng
+		pc.GracefulMode = false
+	})
+
+	pf := Profile{
+		UserID:   "user-purge-1",
+		Fullname: "Alice Purge",
+		Gender:   "F",
+		Country:  "US",
+	}
+	if err := p.Encrypt(ctx, &pf); err != nil {
+		t.Fatal("expect err be nil, got", err)
+	}
+
+	tokens, err := p.Tokenize(ctx, TokenDataSlice("alice@example.com"), WithPrefix("sub_"))
+	if err != nil {
+		t.Fatal("expect err be nil, got", err)
+	}
+	if got, want := len(tokens), 1; got != want {
+		t.Fatalf("expect %d tokens, got %d", want, got)
+	}
+	token := tokens.Get("alice@example.com").Token
+
+	if err := p.Purge(ctx); err != nil {
+		t.Fatal("expect err be nil, got", err)
+	}
+	// Idempotent
+	if err := p.Purge(ctx); err != nil {
+		t.Fatal("expect err be nil, got", err)
+	}
+
+	keys, err := keyEng.GetKeys(ctx, nspace, []string{pf.UserID})
+	if err != nil {
+		t.Fatal("expect err be nil, got", err)
+	}
+	if got, want := len(keys), 0; got != want {
+		t.Fatalf("expect %d keys after purge, got %d", want, got)
+	}
+
+	detok, err := p.Detokenize(ctx, []string{token})
+	if err != nil {
+		t.Fatal("expect err be nil, got", err)
+	}
+	if got, want := len(detok), 0; got != want {
+		t.Fatalf("expect %d detokenized values after purge, got %d", want, got)
+	}
+
+	// Decrypt of previously encrypted data yields replacement (key gone)
+	if err := p.Decrypt(ctx, &pf); err != nil {
+		t.Fatal("expect err be nil, got", err)
+	}
+	if want, got := sensitive.MustFieldTag(pf, "Fullname").Options.Get("replace"), pf.Fullname; !reflect.DeepEqual(want, got) {
+		t.Fatalf("expect %v, %v be equals", want, got)
+	}
+}
+
 func BenchmarkProtector(b *testing.B) {
 	nspace := "tenant-d195kla"
 

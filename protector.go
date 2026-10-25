@@ -23,6 +23,7 @@ var (
 	ErrForgetSubjectFailure  = newErr("failed to forget subject")
 	ErrRecoverSubjectFailure = newErr("failed to recover subject")
 	ErrClearCacheFailure     = newErr("failed to clear cache")
+	ErrPurgeNamespaceFailure = newErr("failed to purge namespace")
 	ErrCannotRecoverSubject  = newErr("cannot recover subject")
 	ErrSubjectForgotten      = newErr("subject is forgotten")
 )
@@ -87,6 +88,10 @@ type Protector interface {
 
 	// ListTokens lists the tokens.
 	ListTokens(ctx context.Context, query core.ListTokensQuery) (result *core.ListTokensResult, err error)
+
+	// Purge hard-deletes every encryption key and token in the protector's
+	// namespace, then clears caches. Idempotent.
+	Purge(ctx context.Context) error
 }
 
 // ProtectorConfig presents the configuration of Protector service
@@ -527,4 +532,27 @@ func (p *protector) ListTokens(ctx context.Context, query core.ListTokensQuery) 
 		return nil, core.ErrTokenEngineNotConfigured
 	}
 	return p.TokenEngine.ListTokens(ctx, p.namespace, query)
+}
+
+// Purge implements Protector.
+func (p *protector) Purge(ctx context.Context) (err error) {
+	defer func() {
+		if err != nil {
+			err = ErrPurgeNamespaceFailure.
+				withBase(err).
+				withNamespace(p.namespace)
+		}
+	}()
+
+	if err = p.KeyEngine.PurgeNamespace(ctx, p.namespace); err != nil {
+		return
+	}
+
+	if p.TokenEngine != nil {
+		if err = p.TokenEngine.PurgeNamespace(ctx, p.namespace); err != nil {
+			return
+		}
+	}
+
+	return p.Clear(ctx, true)
 }

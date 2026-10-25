@@ -106,4 +106,16 @@ func (e *KeyEngineMock) ListNamespace(ctx context.Context) ([]string, error) {
 	return e.NamespaceList, nil
 }
 
+// PurgeNamespace implements core.KeyEngine
+func (e *KeyEngineMock) PurgeNamespace(ctx context.Context, namespace string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if err := e.DeleteKeyErr; err != nil {
+		return err
+	}
+	e.KeyList = core.NewKeyMap()
+	return nil
+}
+
 var _ core.KeyEngine = &KeyEngineMock{}

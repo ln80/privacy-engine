@@ -145,6 +145,20 @@ func (t *TokenEngine) DeleteToken(ctx context.Context, namespace string, token s
 	return cache.delete(token)
 }
 
+// PurgeNamespace implements core.TokenEngine.
+func (t *TokenEngine) PurgeNamespace(ctx context.Context, namespace string) error {
+	if t.origin != nil {
+		if err := t.origin.PurgeNamespace(ctx, namespace); err != nil {
+			return err
+		}
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.cache, namespace)
+	return nil
+}
+
 func (t *TokenEngine) ClearCache(ctx context.Context, namespace string, force bool) error {
 	cache := t.cacheOf(namespace)
 	return cache.clear(t.ttl, force)

@@ -6,11 +6,14 @@ require github.com/google/uuid v1.6.0
 
 require (
 	github.com/ln80/struct-sensitive v0.7.0
-	github.com/sanity-io/litter v1.5.5
+	github.com/sanity-io/litter v1.5.8
 	golang.org/x/crypto v0.52.0
 )
 
 require (
+	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
+	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
+	github.com/stretchr/testify v1.11.1 // indirect
 )

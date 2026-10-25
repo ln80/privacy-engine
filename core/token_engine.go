@@ -12,8 +12,9 @@ var (
 	ErrTokenGenFuncNotFound      = errors.New("token gen function is not found")
 	ErrDetokenizeFailure         = errors.New("failed to detokenize token(s)")
 	ErrTokenizeFailure           = errors.New("failed to tokenize value(s)")
-	ErrDeleteTokenFailure        = errors.New("failed to delete token")
-	ErrTokenEngineNotConfigured  = errors.New("token engine is not configured")
+	ErrDeleteTokenFailure       = errors.New("failed to delete token")
+	ErrPurgeTokenFailure        = errors.New("failed to purge tokens")
+	ErrTokenEngineNotConfigured = errors.New("token engine is not configured")
 )
 
 // TokenData presents a sensitive data that should be tokenized.
@@ -95,6 +96,10 @@ type TokenEngine interface {
 	// ListTokens returns a set of tokens associated with the given namespace.
 	// It returns a cursor to the next page of results.
 	ListTokens(ctx context.Context, namespace string, query ListTokensQuery) (result *ListTokensResult, err error)
+
+	// PurgeNamespace hard-deletes every token in the namespace. Idempotent —
+	// a second call on an empty namespace is a no-op.
+	PurgeNamespace(ctx context.Context, namespace string) error
 }
 
 type ListTokensQuery struct {
