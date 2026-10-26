@@ -46,7 +46,7 @@ Scanners are clean: govulncheck reports 0 reachable vulnerabilities, gosec and s
 | PE-05 | High | Crypto | Values that look encrypted are never encrypted | Open |
 | PE-06 | High | Privacy | Subject ID is stored in clear in every ciphertext | Open |
 | PE-07 | High | Factory | Clear func panics after eviction (data race) | Open |
-| PE-08 | High | Crypto | Key length not enforced (AES-128 silently accepted) | Open |
+| PE-08 | High | Crypto | Key length not enforced (AES-128 silently accepted) | Fixed |
 | PE-09 | High | Leakage | Keys and PII leak through `%#v`, `encoding/json` and `log/slog` | Open |
 | PE-10 | High | Integrity | Decrypting with the wrong namespace silently wipes PII | Open |
 | PE-11 | Medium | Crypto | Field swap not detected (AAD binds namespace only) | Open |
@@ -105,8 +105,8 @@ The idempotency check `protector.go:219` skips any value matching `ENC.<v>.<b64>
 #### PE-07 Factory clear func panics after eviction. Confirmed.
 `factory.go:96` reads `f.reg[namespace]` without the lock and dereferences it. After `Monitor` evicts the entry, the documented `defer clear()` panics with a nil-pointer dereference. It is also a data race on the map.
 
-#### PE-08 Key length not enforced. Confirmed.
-`aes.NewCipher` accepts 16/24/32-byte keys, so a 16-byte key from a custom `KeyGen`, a backend bug, or `EncryptStreamWithKey` silently gives AES-128 while the docs promise AES-256. Enforce exactly 32 bytes in the AES-256 encryptor.
+#### PE-08 Key length not enforced. Fixed.
+`aes.NewCipher` accepts 16/24/32-byte keys, so a 16-byte key from a custom `KeyGen`, a backend bug, or `EncryptStreamWithKey` used to silently give AES-128 while the docs promise AES-256. A 32-byte all-zero key was accepted too. `Encrypt`, `Decrypt`, `EncryptStream`, and `DecryptStream` now reject any key that is not 32 bytes or is all zeros.
 
 #### PE-09 Keys and PII leak through `%#v`, JSON and slog. Confirmed.
 `core.Key.String()` and `core.TokenData.String()` redact only `%v`/`%s`. PoC output:
@@ -319,7 +319,7 @@ Keep DynamoDB encryption at rest on as defence in depth, preferably with a custo
 
 ## 8. Hotfix PR (step 1): scope and plan
 
-PE-01 is fixed. The remaining rows are not started.
+PE-01 and PE-08 are fixed. The remaining rows are not started.
 
 **Goal:** fix the confirmed bugs that need no wire-format or API break, each with a regression test, so the library is safe to keep using while format v2 is designed.
 

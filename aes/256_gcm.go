@@ -35,12 +35,32 @@ func (e *aes256gcm) KeyGen() core.KeyGen {
 	return Key256GenFn
 }
 
+// validateAES256Key rejects keys crypto/aes would silently accept as AES-128 or AES-192,
+// and rejects a 32-byte all-zero key, which AES-GCM would use without error.
+func validateAES256Key(key core.Key) error {
+	if len(key) != aES265KeySize {
+		return errors.New("aes-256 key must be 32 bytes")
+	}
+	var acc byte
+	for _, b := range key {
+		acc |= b
+	}
+	if acc == 0 {
+		return errors.New("aes-256 key must not be all zeros")
+	}
+	return nil
+}
+
 func (e *aes256gcm) Encrypt(namespace string, key core.Key, plainTxt string) (cipherTxt []byte, err error) {
 	defer func() {
 		if err != nil {
 			err = errors.Join(core.ErrEncryptionFailure, err)
 		}
 	}()
+
+	if err = validateAES256Key(key); err != nil {
+		return
+	}
 
 	block, err := aes.NewCipher([]byte(key))
 	if err != nil {
@@ -75,6 +95,10 @@ func (e *aes256gcm) Decrypt(namespace string, key core.Key, cipherTxt []byte) (p
 		}
 	}()
 
+	if err = validateAES256Key(key); err != nil {
+		return
+	}
+
 	block, err := aes.NewCipher([]byte(key))
 	if err != nil {
 		return
@@ -95,9 +119,13 @@ func (e *aes256gcm) Decrypt(namespace string, key core.Key, cipherTxt []byte) (p
 }
 
 func (e *aes256gcm) EncryptStream(namespace string, key core.Key, r io.Reader) (io.Reader, error) {
+	if err := validateAES256Key(key); err != nil {
+		return nil, errors.Join(core.ErrEncryptionFailure, err)
+	}
+
 	block, err := aes.NewCipher([]byte(key))
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(core.ErrEncryptionFailure, err)
 	}
 
 	aead, err := cipher.NewGCM(block)
@@ -170,9 +198,13 @@ func (e *aes256gcm) EncryptStream(namespace string, key core.Key, r io.Reader) (
 }
 
 func (e *aes256gcm) DecryptStream(namespace string, key core.Key, r io.Reader) (io.Reader, error) {
+	if err := validateAES256Key(key); err != nil {
+		return nil, errors.Join(core.ErrDecryptionFailure, err)
+	}
+
 	block, err := aes.NewCipher([]byte(key))
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(core.ErrDecryptionFailure, err)
 	}
 
 	aead, err := cipher.NewGCM(block)
