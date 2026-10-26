@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/ln80/privacy-engine/core"
 	"github.com/ln80/privacy-engine/memory"
@@ -393,6 +394,50 @@ func TestProtector_Purge(t *testing.T) {
 	}
 	if want, got := sensitive.MustFieldTag(pf, "Fullname").Options.Get("replace"), pf.Fullname; !reflect.DeepEqual(want, got) {
 		t.Fatalf("expect %v, %v be equals", want, got)
+	}
+}
+
+func TestProtector_MonitorDoesNotWipeKeys(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Hide KeyEngineCache so NewProtector wraps the store. That is the production shape:
+	// Monitor expires the wrapper cache while Encrypt still holds a key.
+	origin := memory.NewKeyEngine()
+	eng := struct{ core.KeyEngine }{origin}
+
+	f := NewFactory(func(namespace string) Protector {
+		return NewProtector(namespace, eng, func(pc *ProtectorConfig) {
+			pc.CacheEnabled = true
+			pc.CacheTTL = time.Millisecond
+		})
+	}, func(fc *FactoryConfig) {
+		fc.IDLE = time.Hour
+		fc.MonitorPeriod = 2 * time.Millisecond
+	})
+
+	p, _ := f.Instance("tenant-pe01")
+	f.Monitor(ctx)
+
+	const plain = "Idir Moore"
+	// Cache TTL is compared in whole seconds, so run past one second boundary.
+	deadline := time.Now().Add(1200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		pf := Profile{
+			UserID:   "kal5430",
+			Fullname: plain,
+			Gender:   "M",
+			Country:  "MA",
+		}
+		if err := p.Encrypt(ctx, &pf); err != nil {
+			t.Fatal(err)
+		}
+		if err := p.Decrypt(ctx, &pf); err != nil {
+			t.Fatal(err)
+		}
+		if pf.Fullname != plain {
+			t.Fatalf("plaintext changed under Monitor: %q", pf.Fullname)
+		}
 	}
 }
 

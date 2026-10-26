@@ -1,6 +1,7 @@
 package privacytest
 
 import (
+	"bytes"
 	"context"
 	"sync"
 
@@ -64,7 +65,7 @@ func (e *KeyEngineMock) GetKeys(ctx context.Context, namespace string, keyIDs []
 		return nil, err
 	}
 
-	return e.KeyList, nil
+	return cloneKeyMap(e.KeyList), nil
 }
 
 // GetOrCreateKeys implements dynamodb.KeyEngine
@@ -80,7 +81,18 @@ func (e *KeyEngineMock) GetOrCreateKeys(ctx context.Context, namespace string, k
 		return nil, err
 	}
 
-	return e.KeyList, nil
+	return cloneKeyMap(e.KeyList), nil
+}
+
+func cloneKeyMap(in core.KeyMap) core.KeyMap {
+	if in == nil {
+		return nil
+	}
+	out := core.NewKeyMap()
+	for id, k := range in {
+		out[id] = bytes.Clone(k)
+	}
+	return out
 }
 
 // ReEnableKey implements dynamodb.KeyEngine
