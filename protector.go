@@ -207,6 +207,7 @@ func (p *protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) 
 	if err != nil {
 		return err
 	}
+	defer zeroKeyMap(keys)
 
 	fn := func(fr sensitive.FieldReplace, val string) (newVal string, err error) {
 		key, ok := keys[fr.SubjectID]
@@ -282,6 +283,7 @@ func (p *protector) Decrypt(ctx context.Context, structPtrs ...any) (err error) 
 	if err != nil {
 		return
 	}
+	defer zeroKeyMap(keys)
 
 	fn = func(fr sensitive.FieldReplace, val string) (newVal string, err error) {
 		v, subjectID, cipherText, err := parseWireFormat(val)
@@ -336,6 +338,7 @@ func (p *protector) EncryptStream(ctx context.Context, subID string, r io.Reader
 	if err != nil {
 		return nil, err
 	}
+	defer zeroKeyMap(keys)
 
 	key, ok := keys[subID]
 	if !ok {
@@ -362,6 +365,7 @@ func (p *protector) DecryptStream(ctx context.Context, subID string, r io.Reader
 	if err != nil {
 		return nil, err
 	}
+	defer zeroKeyMap(keys)
 
 	key, ok := keys[subID]
 	if !ok {
@@ -391,6 +395,7 @@ func (p *protector) DeriveSubjectKey(ctx context.Context, subID, purpose string)
 	if err != nil {
 		return nil, err
 	}
+	defer zeroKeyMap(keys)
 
 	parentKey, ok := keys[subID]
 	if !ok {
@@ -475,6 +480,16 @@ func (p *protector) Recover(ctx context.Context, subID string) (err error) {
 
 	err = p.KeyEngine.ReEnableKey(ctx, p.namespace, subID)
 	return
+}
+
+// zeroKeyMap wipes key copies this protector owns.
+// EncryptStream and DecryptStream expand the key into the AES schedule before returning,
+// so wiping the copy when the method returns does not affect an in-flight stream.
+func zeroKeyMap(keys core.KeyMap) {
+	for id, k := range keys {
+		core.ZeroKey(k)
+		keys[id] = nil
+	}
 }
 
 // Clear implements Protector.

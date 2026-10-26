@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -29,6 +30,22 @@ func newKeyCache(id string, key core.Key) keyCache {
 		At:    time.Now().Unix(),
 		State: core.StateActive,
 	}
+}
+
+// cloneKey returns a copy with its own backing array.
+// Nil stays nil. Callers and the cache must not share a key slice:
+// ZeroKey writes through the slice header into whatever array it points at.
+func cloneKey(k core.Key) core.Key {
+	return bytes.Clone(k)
+}
+
+// putCachedKey stores a key the cache owns, wiping the previous cache copy.
+// Caller must hold e.mu. owned must already be a private slice.
+func putCachedKey(cache map[string]keyCache, keyID string, owned core.Key) {
+	if prev, ok := cache[keyID]; ok {
+		core.ZeroKey(prev.Key)
+	}
+	cache[keyID] = newKeyCache(keyID, owned)
 }
 
 type engine struct {
@@ -102,7 +119,7 @@ func (e *engine) GetKeys(ctx context.Context, namespace string, keyIDs []string)
 			if key.State != core.StateActive {
 				continue
 			}
-			foundKeys[keyID] = key.Key
+			foundKeys[keyID] = cloneKey(key.Key)
 		} else {
 			if e.origin != nil {
 				missedKeys = append(missedKeys, keyID)
@@ -118,8 +135,10 @@ func (e *engine) GetKeys(ctx context.Context, namespace string, keyIDs []string)
 		}
 		e.mu.Lock()
 		for keyID, k := range keys {
-			foundKeys[keyID] = k
-			cache[keyID] = newKeyCache(keyID, k)
+			// k may be the origin's own slice. Keep two clones and leave k untouched.
+			owned := cloneKey(k)
+			putCachedKey(cache, keyID, owned)
+			foundKeys[keyID] = cloneKey(owned)
 		}
 		e.mu.Unlock()
 	}
@@ -144,10 +163,13 @@ func (e *engine) GetOrCreateKeys(ctx context.Context, namespace string, keyIDs [
 			if err != nil {
 				return nil, err
 			}
+			out := core.NewKeyMap()
 			for keyID, k := range keys {
-				cache[keyID] = newKeyCache(keyID, k)
+				owned := cloneKey(k)
+				putCachedKey(cache, keyID, owned)
+				out[keyID] = cloneKey(owned)
 			}
-			return keys, nil
+			return out, nil
 		}()
 	}
 
@@ -172,8 +194,9 @@ func (e *engine) GetOrCreateKeys(ctx context.Context, namespace string, keyIDs [
 				return nil, errors.Join(core.ErrPersistKeyFailure, err)
 			}
 			k := core.Key(newKey)
-			keys[keyID] = k
-			cache[keyID] = newKeyCache(keyID, k)
+			putCachedKey(cache, keyID, cloneKey(k))
+			keys[keyID] = cloneKey(k)
+			core.ZeroKey(k)
 		}
 	}
 

@@ -39,7 +39,7 @@ Scanners are clean: govulncheck reports 0 reachable vulnerabilities, gosec and s
 
 | ID | Severity | Area | Title | Status |
 |---|---|---|---|---|
-| PE-01 | Critical | Keys | Cache eviction zeroes keys still in use (and the store's own key) | Open |
+| PE-01 | Critical | Keys | Cache eviction zeroes keys still in use (and the store's own key) | Fixed |
 | PE-02 | Critical | Crypto | Stream truncation is not detected | Open |
 | PE-03 | High | Crypto | Short ciphertext panics `Decrypt` | Open |
 | PE-04 | High | Keys | `Forget`/`Recover` report failure after cache expiry although they succeeded | Open |
@@ -76,11 +76,11 @@ Scanners are clean: govulncheck reports 0 reachable vulnerabilities, gosec and s
 
 ### Critical
 
-#### PE-01 Cache eviction zeroes keys still in use. Confirmed.
-`memory/key_engine.go:105` hands callers the cache's own `[]byte`, and `ClearCache`, `DeleteKey` and `PurgeNamespace` call `core.ZeroKey` on that same backing array (`:259`, `:286`, `:318`).
+#### PE-01 Cache eviction zeroes keys still in use. Fixed.
+`memory/key_engine.go` used to hand callers the cache's own `[]byte`, and `ClearCache`, `DeleteKey` and `PurgeNamespace` called `core.ZeroKey` on that same backing array.
 - PoC: after `ClearCache(force)`, a key the caller already holds becomes 32 zero bytes. AES accepts an all-zero key, so a `Factory.Monitor` tick (every 5 s by default) that lands during `Encrypt` writes PII encrypted under a publicly known key, with no error.
 - PoC: with `NewCacheWrapper(memory.NewKeyEngine())`, eviction also zeroes the **origin store's** key (shared slice), making the subject's data undecryptable.
-- Fix: every engine returns a copy (`bytes.Clone`) and zeroes only memory it owns; callers zero their copy when done; the encryptor rejects wrong-length and all-zero keys.
+- Fix: `GetKeys` and `GetOrCreateKeys` return `bytes.Clone` copies, and the cache stores a separate clone. `ZeroKey` runs only on a slice the cache owns. `Protector` zeros its copies after encrypt, decrypt, stream, and key derivation. Rejecting an all-zero key remains PE-08.
 
 #### PE-02 Stream truncation is not detected. Confirmed.
 The end-of-stream marker (`aes/256_gcm.go:156`, check at `:216`) is four unauthenticated zero bytes. Anyone can drop all chunks after a boundary and append `00 00 00 00`; `DecryptStream` returns the shorter plaintext with `err == nil`. PoC: a 20-byte stream cut to header + marker decrypts to an empty body without error. The header (version, base nonce) is also outside the AAD.
@@ -319,7 +319,7 @@ Keep DynamoDB encryption at rest on as defence in depth, preferably with a custo
 
 ## 8. Hotfix PR (step 1): scope and plan
 
-Not started. No code is changed until this plan is approved.
+PE-01 is fixed. The remaining rows are not started.
 
 **Goal:** fix the confirmed bugs that need no wire-format or API break, each with a regression test, so the library is safe to keep using while format v2 is designed.
 
