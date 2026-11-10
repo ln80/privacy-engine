@@ -102,8 +102,9 @@ func TestProtector_EncryptDecrypt(t *testing.T) {
 			decryptErr error
 		}{
 			{
+				// Data with no subject is a record error, not a tag error.
 				val:        &StructSubjectNotFound{},
-				Encryptorr: sensitive.ErrInvalidTagConfiguration,
+				Encryptorr: sensitive.ErrSubjectIDNotFound,
 			},
 			{
 				val:        &StructMultipleSubjects{Val1: "id", Val2: "otherId"},

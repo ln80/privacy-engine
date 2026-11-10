@@ -35,6 +35,12 @@ type Protector interface {
 	// Encrypt encrypts Personal data fields of the given structs pointers.
 	// It does its best to ensure atomicity in case of multiple structs pointers.
 	// It ensures idempotency and only encrypts fields once.
+	//
+	// Each field is encrypted under its own subject's key. By default a struct
+	// must use one subject: a second subjectID that governs data, or differing
+	// subject values, fail with struct-sensitive's ErrMultipleSubjectID. Set
+	// ProtectorConfig.MultipleSubjects to allow several. A subject whose key is
+	// forgotten fails with ErrSubjectForgotten.
 	Encrypt(ctx context.Context, structPts ...any) error
 
 	// Decrypt decrypts Personal data fields of the given structs pointers.
@@ -117,6 +123,13 @@ type ProtectorConfig struct {
 
 	// TokenEngine is an implementation of core.TokenEngine
 	TokenEngine core.TokenEngine
+
+	// MultipleSubjects lets Encrypt accept a struct whose data belongs to
+	// several subjects, such as a record with an embedded author that declares
+	// its own subjectID. Each field is then encrypted under the nearest
+	// declared subject. Off by default: one record, one key to forget.
+	// Decrypt reads the subject from each value and accepts either.
+	MultipleSubjects bool
 }
 
 type protector struct {
@@ -183,20 +196,30 @@ func (p *protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) 
 		}
 	}()
 
+	mode := sensitive.SingleSubject
+	if p.MultipleSubjects {
+		mode = sensitive.MultipleSubjects
+	}
 	structs := make([]sensitive.Struct, 0)
 	subjectIDs := make([]string, 0)
 	for _, strPtr := range structPtrs {
-		piiStruct, err := sensitive.Scan(strPtr, true)
+		piiStruct, err := sensitive.Scan(strPtr, true, sensitive.WithSubjectMode(mode))
 		if err != nil {
 			return err
 		}
 
 		if piiStruct.HasSensitive() {
+			// Every subject the data uses, not only the root's: a nested
+			// subject's key would otherwise be missing and read as forgotten.
+			subs, err := piiStruct.Subjects()
+			if err != nil {
+				return err
+			}
 			structs = append(structs, piiStruct)
-			subjectIDs = append(subjectIDs, piiStruct.SubjectID())
+			subjectIDs = append(subjectIDs, subs...)
 		}
 	}
-	if len(structs) == 0 {
+	if len(subjectIDs) == 0 {
 		return nil
 	}
 
@@ -210,6 +233,7 @@ func (p *protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) 
 	defer zeroKeyMap(keys)
 
 	fn := func(fr sensitive.FieldReplace, val string) (newVal string, err error) {
+		// Keys were fetched for every subject in use: a missing one was forgotten.
 		key, ok := keys[fr.SubjectID]
 		if !ok {
 			err = ErrSubjectForgotten.withSubject(fr.SubjectID)
