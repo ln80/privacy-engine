@@ -68,10 +68,22 @@ Fields are tagged using `pii`, `sensitive`, or `sens` (interchangeable):
 
 | Tag | Purpose | Example |
 |-----|---------|---------|
-| `subjectID` | Identifies the data subject (one per struct) | `pii:"subjectID"` |
+| `subjectID` | Identifies the data subject (one per struct; see below for nested subjects) | `pii:"subjectID"` |
 | `data` | Marks a field as sensitive | `pii:"data"` |
 | `data,replace=X` | Replacement value when the subject is forgotten | `pii:"data,replace=deleted"` |
 | `dive` | Recurse into nested structs | `pii:"dive"` |
+
+### One subject or several per record
+
+By default `Encrypt` requires each record to use one subject, so forgetting that subject erases all of the record's personal data. A record whose data belongs to several subjects (for example an embedded author with its own `subjectID`) fails with struct-sensitive's `ErrMultipleSubjectID`. To allow it, encrypting each field under the nearest declared subject:
+
+```go
+p := privacy.NewProtector("tenant", engine, func(pc *privacy.ProtectorConfig) {
+    pc.MultipleSubjects = true
+})
+```
+
+`Decrypt` reads the subject from each value and accepts either.
 
 ## Architecture
 
