@@ -5,19 +5,13 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"encoding/binary"
 	"errors"
 	"io"
 
 	"github.com/ln80/privacy-engine/core"
 )
 
-const (
-	aES265KeySize = 32
-	maxChunkSize  = 4*1024*1024 + 28 // 4MB plaintext + GCM overhead
-)
-
-var errStreamTruncated = errors.New("encrypted stream truncated: missing end-of-stream marker")
+const aES265KeySize = 32
 
 func Key256GenFn(ctx context.Context, namespace, subID string) ([]byte, error) {
 	return getRandomBytes(aES265KeySize)
@@ -118,164 +112,16 @@ func (e *aes256gcm) Decrypt(namespace string, key core.Key, cipherTxt []byte) (p
 	return string(plnTxt), nil
 }
 
+// EncryptStream implements core.Encryptor with stream format v2 (see stream.go).
+// The returned reader does no work until read and holds no goroutine.
 func (e *aes256gcm) EncryptStream(namespace string, key core.Key, r io.Reader) (io.Reader, error) {
-	if err := validateAES256Key(key); err != nil {
-		return nil, errors.Join(core.ErrEncryptionFailure, err)
-	}
-
-	block, err := aes.NewCipher([]byte(key))
-	if err != nil {
-		return nil, errors.Join(core.ErrEncryptionFailure, err)
-	}
-
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	baseNonce := make([]byte, aead.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, baseNonce); err != nil {
-		return nil, err
-	}
-
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer pw.CloseWithError(nil) //nolint:errcheck // CloseWithError always returns nil
-
-		// Write header
-		header := make([]byte, 1+len(baseNonce))
-		header[0] = 1 // version
-		copy(header[1:], baseNonce)
-
-		if _, err := pw.Write(header); err != nil {
-			pw.CloseWithError(err)
-			return
-		}
-
-		buf := make([]byte, 4*1024*1024) // 4MB chunks
-		var chunkIndex uint64
-
-		for {
-			n, readErr := r.Read(buf)
-			if n > 0 {
-				plaintext := buf[:n]
-
-				nonce := deriveNonce(baseNonce, chunkIndex)
-				aad := prepareAdditionalData(namespaceWithChunk(namespace, chunkIndex))
-
-				ciphertext := aead.Seal(nil, nonce, plaintext, aad)
-				chunkIndex++
-
-				var lenBuf [4]byte
-				binary.BigEndian.PutUint32(lenBuf[:], uint32(len(ciphertext))) // #nosec G115 -- ciphertext bounded by 4MB chunk size
-
-				if _, err := pw.Write(lenBuf[:]); err != nil {
-					pw.CloseWithError(err)
-					return
-				}
-				if _, err := pw.Write(ciphertext); err != nil {
-					pw.CloseWithError(err)
-					return
-				}
-			}
-
-			if readErr == io.EOF {
-				var endMarker [4]byte
-				if _, err := pw.Write(endMarker[:]); err != nil {
-					pw.CloseWithError(err)
-				}
-				return
-			}
-			if readErr != nil {
-				pw.CloseWithError(readErr)
-				return
-			}
-		}
-	}()
-
-	return pr, nil
+	return newStreamEncrypter(namespace, key, r, DefaultStreamSegmentSize)
 }
 
+// DecryptStream implements core.Encryptor with stream format v2 (see stream.go).
+// It reads and checks the header before returning. Plaintext of each segment is
+// released only once that segment authenticates; the stream as a whole is valid
+// only once Read returns io.EOF.
 func (e *aes256gcm) DecryptStream(namespace string, key core.Key, r io.Reader) (io.Reader, error) {
-	if err := validateAES256Key(key); err != nil {
-		return nil, errors.Join(core.ErrDecryptionFailure, err)
-	}
-
-	block, err := aes.NewCipher([]byte(key))
-	if err != nil {
-		return nil, errors.Join(core.ErrDecryptionFailure, err)
-	}
-
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-
-	// Read header
-	header := make([]byte, 1+aead.NonceSize())
-	if _, err := io.ReadFull(r, header); err != nil {
-		return nil, err
-	}
-
-	version := header[0]
-	if version != 1 {
-		return nil, errors.New("unsupported version")
-	}
-
-	baseNonce := header[1:]
-
-	pr, pw := io.Pipe()
-
-	go func() {
-		defer pw.CloseWithError(nil) //nolint:errcheck // CloseWithError always returns nil
-
-		var chunkIndex uint64
-
-		for {
-			var lenBuf [4]byte
-			_, err := io.ReadFull(r, lenBuf[:])
-			if err == io.EOF {
-				pw.CloseWithError(errStreamTruncated)
-				return
-			}
-			if err != nil {
-				pw.CloseWithError(err)
-				return
-			}
-
-			chunkLen := binary.BigEndian.Uint32(lenBuf[:])
-			if chunkLen == 0 {
-				return
-			}
-			if chunkLen > maxChunkSize {
-				pw.CloseWithError(errors.New("chunk size exceeds maximum"))
-				return
-			}
-			ciphertext := make([]byte, chunkLen)
-
-			if _, err := io.ReadFull(r, ciphertext); err != nil {
-				pw.CloseWithError(err)
-				return
-			}
-
-			nonce := deriveNonce(baseNonce, chunkIndex)
-			aad := prepareAdditionalData(namespaceWithChunk(namespace, chunkIndex))
-
-			plaintext, err := aead.Open(nil, nonce, ciphertext, aad)
-			if err != nil {
-				pw.CloseWithError(err)
-				return
-			}
-
-			chunkIndex++
-
-			if _, err := pw.Write(plaintext); err != nil {
-				pw.CloseWithError(err)
-				return
-			}
-		}
-	}()
-
-	return pr, nil
+	return newStreamDecrypter(namespace, key, r)
 }

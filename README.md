@@ -118,11 +118,22 @@ For large payloads (files, attachments):
 
 ```go
 encReader, _ := protector.EncryptStream(ctx, "user-123", plaintextReader)
-// encReader emits authenticated ciphertext in 4MB chunks
+// encReader emits authenticated ciphertext in 64 KiB segments
 
 decReader, _ := protector.DecryptStream(ctx, "user-123", encReader)
 // decReader emits the original plaintext
 ```
+
+Streams use the STREAM construction (as in Tink and age): each stream gets its own
+key derived from the subject's key, and every segment is bound to its position, to
+the header and to whether it is the last one. Truncation, reordering, dropped or
+appended segments, and header edits all fail with `ErrDecryptionFailure`.
+
+Plaintext is released one authenticated segment at a time, so a damaged stream
+yields its first intact segments and then an error. Treat the output as valid only
+once `Read` returns `io.EOF`, for example by writing to a temporary location and
+committing on success. The readers hold no goroutine, so an abandoned stream leaks
+nothing.
 
 ## Factory & Monitoring
 
