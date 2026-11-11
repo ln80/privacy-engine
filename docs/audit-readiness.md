@@ -40,7 +40,7 @@ Scanners are clean: govulncheck reports 0 reachable vulnerabilities, gosec and s
 | ID | Severity | Area | Title | Status |
 |---|---|---|---|---|
 | PE-01 | Critical | Keys | Cache eviction zeroes keys still in use (and the store's own key) | Fixed |
-| PE-02 | Critical | Crypto | Stream truncation is not detected | Open |
+| PE-02 | Critical | Crypto | Stream truncation is not detected | Fixed |
 | PE-03 | High | Crypto | Short ciphertext panics `Decrypt` | Open |
 | PE-04 | High | Keys | `Forget`/`Recover` report failure after cache expiry although they succeeded | Open |
 | PE-05 | High | Crypto | Values that look encrypted are never encrypted | Open |
@@ -57,7 +57,7 @@ Scanners are clean: govulncheck reports 0 reachable vulnerabilities, gosec and s
 | PE-16 | Medium | Tokens | `WithPrefix` ignored by in-memory engine | Open |
 | PE-17 | Medium | Tokens | Token collisions not checked | Open |
 | PE-18 | Medium | Tokens | `ListTokens` returns all PII in clear, ignores paging | Open |
-| PE-19 | Medium | Streams | Abandoned streams leak goroutines | Open |
+| PE-19 | Medium | Streams | Abandoned streams leak goroutines | Fixed |
 | PE-20 | Medium | Cache | Encrypt path never uses the cache; global lock held during remote calls | Open |
 | PE-21 | Medium | Cache | Caches are unbounded | Open |
 | PE-22 | Medium | Build | Uncommitted `go.sum` incomplete; local tests depend on `go.work` | Open |
@@ -82,9 +82,10 @@ Scanners are clean: govulncheck reports 0 reachable vulnerabilities, gosec and s
 - PoC: with `NewCacheWrapper(memory.NewKeyEngine())`, eviction also zeroes the **origin store's** key (shared slice), making the subject's data undecryptable.
 - Fix: `GetKeys` and `GetOrCreateKeys` return `bytes.Clone` copies, and the cache stores a separate clone. `ZeroKey` runs only on a slice the cache owns. `Protector` zeros its copies after encrypt, decrypt, stream, and key derivation. Rejecting an all-zero key remains PE-08.
 
-#### PE-02 Stream truncation is not detected. Confirmed.
+#### PE-02 Stream truncation is not detected. Fixed.
 The end-of-stream marker (`aes/256_gcm.go:156`, check at `:216`) is four unauthenticated zero bytes. Anyone can drop all chunks after a boundary and append `00 00 00 00`; `DecryptStream` returns the shorter plaintext with `err == nil`. PoC: a 20-byte stream cut to header + marker decrypts to an empty body without error. The header (version, base nonce) is also outside the AAD.
 - Fix: STREAM construction (as in Tink and age): a "final chunk" flag in each chunk's nonce or AAD, header bound into the AAD, EOF before the final chunk is an error. New stream format version.
+- Done (stream format v2, `aes/stream.go`; v1 is no longer readable, by decision: no deployed data to keep). Header `version | alg | segment size | salt | nonce prefix`. Per-stream key `HKDF-SHA256(DEK, salt, "privacy-engine/stream/v2" | len16(namespace) | namespace)`, so field and stream encryption no longer share a key and the namespace is length-prefixed (two PE-24 items). Segment nonce `prefix | index | final flag`; the header is every segment's AAD. Segments are filled with `io.ReadFull`, so boundaries no longer depend on the source reader (PE-24). Regression tests in `aes/stream_test.go`: every truncation offset, the v1 marker forgery, drop/swap/duplicate/append, every single-bit flip, wrong key and namespace, bad headers; `FuzzDecryptStream` checks that any change to a valid stream fails.
 
 ### High
 
@@ -129,7 +130,7 @@ The idempotency check `protector.go:219` skips any value matching `ENC.<v>.<b64>
 - **PE-16 `WithPrefix` ignored** by the in-memory engine (PoC: plain UUID returned), while the README and example advertise it.
 - **PE-17 Token collisions not checked.** A custom `TokenGenFunc` that collides overwrites another person's mapping, so `Detokenize` returns the wrong person's data. Check-and-retry on insert.
 - **PE-18 `ListTokens` is a bulk PII export.** It returns every value in clear, and the memory implementation ignores `Limit`, `Cursor`, `Prefix` and `SearchText` (`memory/token_engine.go:20`). Needs paging, a clearly privileged name, and an audit hook.
-- **PE-19 Abandoned streams leak goroutines.** Confirmed: `EncryptStream`/`DecryptStream` return `io.Reader`; a caller that stops reading leaves the writer goroutine blocked forever (PoC: 50 abandoned streams leave 50 goroutines and their 4 MB buffers). Return `io.ReadCloser` and close the pipe on `Close`, and honour `ctx`.
+- **PE-19 Abandoned streams leak goroutines. Fixed** by the PE-02 rewrite: both stream readers are pull-based and start no goroutine (regression: `TestStreamAbandonedLeaksNoGoroutine`). Was confirmed: `EncryptStream`/`DecryptStream` return `io.Reader`; a caller that stops reading leaves the writer goroutine blocked forever (PoC: 50 abandoned streams leave 50 goroutines and their 4 MB buffers). Return `io.ReadCloser` and close the pipe on `Close`, and honour `ctx`.
 - **PE-20 Encrypt path bypasses the cache.** Confirmed: with the cache on, 5 `Encrypt` calls for the same subject make 5 origin `GetOrCreateKeys` calls (`memory/key_engine.go`, origin branch). The wrapper also holds the global write lock across that remote call, serialising all namespaces and ignoring `ctx` cancellation while waiting. Cost and availability issue for the KMS backend.
 - **PE-21 Caches are unbounded.** Key and token caches grow with every subject seen until TTL; a burst of unique subjects is a memory DoS and keeps more PII and keys resident. Add a size bound (LRU).
 - **PE-22 Build depends on `go.work`.** The uncommitted `go.sum` lacks `/go.mod` hashes for litter, testify, go-spew, go-difflib and yaml.v3. With `GOWORK=off`, the root package fails to build its tests; CI will fail. Locally, tests run against the workspace's struct-sensitive rather than v0.7.0. Run `GOWORK=off go mod tidy && GOWORK=off go test ./...` before committing, and in CI.
