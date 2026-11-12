@@ -81,8 +81,8 @@ payload = alg (1) | keyVersion (4, BE) | nonce (12) | ciphertext | tag (16)
 - `alg = 0x01`: field format v2, AES-256-GCM under the DEK. It is the only format ID, so it doubles as the format version; no other value is accepted.
 - `keyVersion` starts at `1`. Until rotation is designed, the protector writes 1 and rejects anything else with a clear error, not "forgotten".
 - Subject ID: 1 to 1024 bytes after decoding.
-- Payload: at least `1 + 4 + 12 + 16 = 33` bytes, checked before any slicing (PE-03).
-- Parsing is a split on `.` plus strict base64url decoding, with no regex. Exactly three parts; anything else is "not a v2 value".
+- Payload: the 5-byte header plus a non-empty ciphertext, checked by the parser. The encryptor then checks its own minimum (nonce + tag = 28 bytes for `0x01`), so an AES-256-GCM value is at least 33 bytes and nothing is sliced before its length is known (PE-03).
+- Parsing is a prefix check, one split on `.`, an alphabet check (`A-Z a-z 0-9 - _` only) and strict base64url decoding, with no regex. Exactly three parts; anything else is "not a v2 value". The alphabet check matters: Go's base64 decoder skips `\r` and `\n` even in strict mode, which would give one value two textual forms. Every accepted value re-encodes to the exact same string (fuzzed).
 - base64url without padding makes values safe in URLs, JSON, DynamoDB keys and file names.
 
 Example: plaintext `alice@example.org` (17 bytes), subject a 36-character UUID:

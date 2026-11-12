@@ -254,7 +254,12 @@ func (p *protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) 
 		if err != nil {
 			return
 		}
-		newVal = wireFormat(fr.SubjectID, encodedVal)
+		newVal = encodeWireValue(wireValue{
+			subjectID:  fr.SubjectID,
+			alg:        p.Encryptor.Algorithm(),
+			keyVersion: subjectKeyVersion,
+			ciphertext: encodedVal,
+		})
 		return
 	}
 
@@ -291,12 +296,12 @@ func (p *protector) Decrypt(ctx context.Context, structPtrs ...any) (err error) 
 	subjectIDs := make([]string, 0)
 	fn := func(fr sensitive.FieldReplace, val string) (newVal string, err error) {
 		newVal = val
-		_, subjectID, _, err := parseWireFormat(val)
+		wv, err := parseWireValue(val)
 		if err != nil {
 			err = nil
 			return
 		}
-		subjectIDs = append(subjectIDs, subjectID)
+		subjectIDs = append(subjectIDs, wv.subjectID)
 		return
 	}
 	for idx, s := range structs {
@@ -314,25 +319,31 @@ func (p *protector) Decrypt(ctx context.Context, structPtrs ...any) (err error) 
 	defer zeroKeyMap(keys)
 
 	fn = func(fr sensitive.FieldReplace, val string) (newVal string, err error) {
-		v, subjectID, cipherText, err := parseWireFormat(val)
+		wv, err := parseWireValue(val)
 		if err != nil {
-			// TBD warning ??
+			// Not a field value: a field that was never encrypted is left as is.
 			newVal = val
 			err = nil
 			return
 		}
-		if v != 1 {
-			err = errors.New("unsupported wire format version")
+		// Checked before the key lookup: a value this protector cannot read is
+		// an error whatever its subject's state.
+		if wv.alg != p.Encryptor.Algorithm() {
+			err = fmt.Errorf("%w: unsupported algorithm %#x at %s", ErrInvalidWireFormat, wv.alg, fr.Path)
+			return
+		}
+		if wv.keyVersion != subjectKeyVersion {
+			err = fmt.Errorf("%w: unsupported key version %d at %s", ErrInvalidWireFormat, wv.keyVersion, fr.Path)
 			return
 		}
 
-		key, ok := keys[subjectID]
+		key, ok := keys[wv.subjectID]
 		if !ok {
 			newVal = fr.Options["replace"]
 			return
 		}
 
-		plain, err := p.Encryptor.Decrypt(p.subjectBinding(), key, cipherText)
+		plain, err := p.Encryptor.Decrypt(p.subjectBinding(), key, wv.ciphertext)
 		if err != nil {
 			return "", err
 		}
