@@ -103,6 +103,12 @@ func (e *aes256gcm) Decrypt(namespace string, key core.Key, cipherTxt []byte) (p
 		return
 	}
 
+	// A ciphertext shorter than nonce + tag cannot be valid; slicing it would panic.
+	if len(cipherTxt) < aesgcm.NonceSize()+aesgcm.Overhead() {
+		err = errors.New("ciphertext too short")
+		return
+	}
+
 	aad := prepareAdditionalData(namespace)
 	plnTxt, err := aesgcm.Open(nil, cipherTxt[:aesgcm.NonceSize()], cipherTxt[aesgcm.NonceSize():], aad) // #nosec G407
 	if err != nil {

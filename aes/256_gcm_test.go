@@ -87,3 +87,37 @@ func TestAES256RoundTrip(t *testing.T) {
 		t.Fatalf("expect %q, got %q", plain, out)
 	}
 }
+
+// PE-03 regression: a ciphertext shorter than nonce + tag returns an error
+// instead of panicking on the nonce slice.
+func TestAES256DecryptShortCiphertext(t *testing.T) {
+	enc := New256GCMEncryptor()
+	key := testKey(t)
+	for n := 0; n < 12+16; n++ {
+		_, err := enc.Decrypt(testNS, key, make([]byte, n))
+		if !errors.Is(err, core.ErrDecryptionFailure) {
+			t.Fatalf("len %d: expect ErrDecryptionFailure, got %v", n, err)
+		}
+	}
+}
+
+// FuzzDecrypt: arbitrary input never panics, and only the exact ciphertext
+// that was produced decrypts.
+func FuzzDecrypt(f *testing.F) {
+	enc := New256GCMEncryptor()
+	key := testKey(f)
+	const plain = "fuzz plaintext"
+	valid, err := enc.Encrypt(testNS, key, plain)
+	if err != nil {
+		f.Fatal(err)
+	}
+	f.Add(valid)
+	f.Add([]byte{1, 2, 3}) // the PE-03 crash input
+	f.Add(valid[:28])
+	f.Fuzz(func(t *testing.T, in []byte) {
+		got, err := enc.Decrypt(testNS, key, in)
+		if err == nil && (!bytes.Equal(in, valid) || got != plain) {
+			t.Fatalf("forged ciphertext accepted: %q", got)
+		}
+	})
+}
