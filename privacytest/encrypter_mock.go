@@ -26,20 +26,20 @@ func (e *UnstableEncryptorMock) ResetCounter() {
 }
 
 // Decrypt implements core.Encryptor
-func (e *UnstableEncryptorMock) Decrypt(namespace string, key core.Key, cipherTxt []byte) (plainTxt string, err error) {
+func (e *UnstableEncryptorMock) Decrypt(binding core.Binding, key core.Key, cipherTxt []byte) (plaintext []byte, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	if e.counter >= e.PointOfFailure {
-		return "", fmt.Errorf("%w: %v", core.ErrDecryptionFailure, ErrEncryptionMock)
+		return nil, fmt.Errorf("%w: %v", core.ErrDecryptionFailure, ErrEncryptionMock)
 	}
 	e.counter++
 
-	return string(cipherTxt[len("mock"):]), nil
+	return bytes.Clone(cipherTxt[len("mock"):]), nil
 }
 
 // Encrypt implements core.Encryptor
-func (e *UnstableEncryptorMock) Encrypt(namespace string, key core.Key, plainTxt string) (cipherTxt []byte, err error) {
+func (e *UnstableEncryptorMock) Encrypt(binding core.Binding, key core.Key, plaintext []byte) (cipherTxt []byte, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -48,11 +48,11 @@ func (e *UnstableEncryptorMock) Encrypt(namespace string, key core.Key, plainTxt
 	}
 	e.counter++
 
-	return []byte("mock" + plainTxt), nil
+	return append([]byte("mock"), plaintext...), nil
 }
 
 // EncryptStream implements core.Encryptor
-func (e *UnstableEncryptorMock) EncryptStream(namespace string, key core.Key, r io.Reader) (io.Reader, error) {
+func (e *UnstableEncryptorMock) EncryptStream(binding core.Binding, key core.Key, r io.Reader) (io.Reader, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -69,7 +69,7 @@ func (e *UnstableEncryptorMock) EncryptStream(namespace string, key core.Key, r 
 }
 
 // DecryptStream implements core.Encryptor
-func (e *UnstableEncryptorMock) DecryptStream(namespace string, key core.Key, r io.Reader) (io.Reader, error) {
+func (e *UnstableEncryptorMock) DecryptStream(binding core.Binding, key core.Key, r io.Reader) (io.Reader, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -83,6 +83,11 @@ func (e *UnstableEncryptorMock) DecryptStream(namespace string, key core.Key, r 
 		return nil, err
 	}
 	return bytes.NewReader(cipherTxt[len("mock"):]), nil
+}
+
+// Algorithm implements core.Encryptor. 0xFF is reserved for test doubles.
+func (*UnstableEncryptorMock) Algorithm() uint8 {
+	return 0xFF
 }
 
 // KeyGen implements core.Encryptor

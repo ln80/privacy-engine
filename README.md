@@ -99,7 +99,7 @@ p := privacy.NewProtector("tenant", engine, func(pc *privacy.ProtectorConfig) {
 ```
 
 - **KeyEngine** manages encryption key lifecycle (create, get, disable, re-enable, delete). Implementations: in-memory (for tests), DynamoDB + KMS (production, see [privacy-engine.elastic](https://github.com/ln80/privacy-engine.elastic)).
-- **Encryptor** handles the actual encryption. Default: AES-256-GCM with random nonces and namespace-bound AAD.
+- **Encryptor** handles the actual encryption. Default: AES-256-GCM with random nonces; the AAD binds the namespace, the key version and the algorithm ID (`core.Binding`).
 - **TokenEngine** manages value-to-token mappings for pseudonymization. Optional.
 
 ## Tokenization

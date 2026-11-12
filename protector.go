@@ -132,6 +132,10 @@ type ProtectorConfig struct {
 	MultipleSubjects bool
 }
 
+// subjectKeyVersion is the only DEK version until rotation exists; it is bound
+// into every ciphertext so rotation can later tell versions apart.
+const subjectKeyVersion uint32 = 1
+
 type protector struct {
 	namespace string
 
@@ -246,7 +250,7 @@ func (p *protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) 
 			return
 		}
 
-		encodedVal, err := p.Encryptor.Encrypt(p.namespace, key, val)
+		encodedVal, err := p.Encryptor.Encrypt(p.subjectBinding(), key, []byte(val))
 		if err != nil {
 			return
 		}
@@ -328,10 +332,12 @@ func (p *protector) Decrypt(ctx context.Context, structPtrs ...any) (err error) 
 			return
 		}
 
-		newVal, err = p.Encryptor.Decrypt(p.namespace, key, cipherText)
+		plain, err := p.Encryptor.Decrypt(p.subjectBinding(), key, cipherText)
 		if err != nil {
 			return "", err
 		}
+		newVal = string(plain)
+		clear(plain)
 		return
 	}
 
@@ -369,7 +375,7 @@ func (p *protector) EncryptStream(ctx context.Context, subID string, r io.Reader
 		return nil, ErrSubjectForgotten.withSubject(subID)
 	}
 
-	return p.Encryptor.EncryptStream(p.namespace, key, r)
+	return p.Encryptor.EncryptStream(p.subjectBinding(), key, r)
 }
 
 func (p *protector) DecryptStream(ctx context.Context, subID string, r io.Reader) (out io.Reader, err error) {
@@ -396,7 +402,7 @@ func (p *protector) DecryptStream(ctx context.Context, subID string, r io.Reader
 		return nil, ErrSubjectForgotten.withSubject(subID)
 	}
 
-	return p.Encryptor.DecryptStream(p.namespace, key, r)
+	return p.Encryptor.DecryptStream(p.subjectBinding(), key, r)
 }
 
 func (p *protector) DeriveSubjectKey(ctx context.Context, subID, purpose string) (key core.Key, err error) {
@@ -447,7 +453,7 @@ func (p *protector) EncryptStreamWithKey(ctx context.Context, key core.Key, r io
 		}
 	}()
 
-	return p.Encryptor.EncryptStream(p.namespace, key, r)
+	return p.Encryptor.EncryptStream(p.callerKeyBinding(), key, r)
 }
 
 func (p *protector) DecryptStreamWithKey(ctx context.Context, key core.Key, r io.Reader) (out io.Reader, err error) {
@@ -459,7 +465,7 @@ func (p *protector) DecryptStreamWithKey(ctx context.Context, key core.Key, r io
 		}
 	}()
 
-	return p.Encryptor.DecryptStream(p.namespace, key, r)
+	return p.Encryptor.DecryptStream(p.callerKeyBinding(), key, r)
 }
 
 // Forget implements Protector.
@@ -504,6 +510,17 @@ func (p *protector) Recover(ctx context.Context, subID string) (err error) {
 
 	err = p.KeyEngine.ReEnableKey(ctx, p.namespace, subID)
 	return
+}
+
+// subjectBinding binds data encrypted under a subject's DEK.
+func (p *protector) subjectBinding() core.Binding {
+	return core.Binding{Namespace: p.namespace, KeyVersion: subjectKeyVersion}
+}
+
+// callerKeyBinding binds data encrypted under a key the caller manages
+// (the *WithKey stream methods), which has no version in the key engine.
+func (p *protector) callerKeyBinding() core.Binding {
+	return core.Binding{Namespace: p.namespace}
 }
 
 // zeroKeyMap wipes key copies this protector owns.

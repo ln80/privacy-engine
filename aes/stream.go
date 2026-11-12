@@ -17,7 +17,7 @@ import (
 // Stream format v2: online authenticated encryption in the STREAM construction
 // (Hoang, Reyhanitabar, Rogaway, Vizár 2015), as used by Tink and age.
 //
-//	header    = version(1) | alg(1) | segmentSize(4, BE) | salt(32) | noncePrefix(7)
+//	header    = version(1) | alg(1) | keyVersion(4, BE) | segmentSize(4, BE) | salt(32) | noncePrefix(7)
 //	streamKey = HKDF-SHA256(ikm=DEK, salt=salt, info="privacy-engine/stream/v2" | len16(ns) | ns)
 //	segment_i = AES-256-GCM(streamKey, nonce=noncePrefix | i(4, BE) | final(1), aad=header)
 //
@@ -28,14 +28,22 @@ import (
 // with final=1, so a stream cut at a segment boundary, extended, reordered or
 // with a segment dropped fails authentication. The header is the AAD of every
 // segment and its salt feeds the key derivation, so a header edit fails too.
+// keyVersion is the Binding's: the decrypter rejects a stream whose header
+// names another version than the key it was given (0 = caller-managed key).
 const (
 	streamVersion          byte = 2
 	streamAlgAES256GCMHKDF byte = 1
 
 	streamSaltSize        = 32
 	streamNoncePrefixSize = 7
-	streamHeaderSize      = 2 + 4 + streamSaltSize + streamNoncePrefixSize
-	streamTagSize         = 16
+	streamHeaderSize      = 2 + 4 + 4 + streamSaltSize + streamNoncePrefixSize
+
+	// Header offsets.
+	hdrKeyVersion  = 2
+	hdrSegmentSize = hdrKeyVersion + 4
+	hdrSalt        = hdrSegmentSize + 4
+	hdrNoncePrefix = hdrSalt + streamSaltSize
+	streamTagSize  = 16
 
 	// DefaultStreamSegmentSize is the plaintext size of every segment but the last.
 	DefaultStreamSegmentSize = 64 * 1024
@@ -47,10 +55,9 @@ const (
 )
 
 var (
-	errStreamAuth     = errors.New("encrypted stream failed authentication: tampered, truncated, or wrong key or namespace")
-	errStreamHeader   = errors.New("invalid encrypted stream header")
-	errStreamTooLong  = errors.New("stream exceeds the maximum number of segments")
-	errNamespaceLimit = errors.New("namespace too long")
+	errStreamAuth    = errors.New("encrypted stream failed authentication: tampered, truncated, or wrong key or namespace")
+	errStreamHeader  = errors.New("invalid encrypted stream header")
+	errStreamTooLong = errors.New("stream exceeds the maximum number of segments")
 )
 
 // streamAEAD derives the per-stream AES-256-GCM AEAD from the DEK.
@@ -119,7 +126,7 @@ type streamEncrypter struct {
 	err  error
 }
 
-func newStreamEncrypter(namespace string, key core.Key, r io.Reader, segSize int) (io.Reader, error) {
+func newStreamEncrypter(binding core.Binding, key core.Key, r io.Reader, segSize int) (io.Reader, error) {
 	if err := validateAES256Key(key); err != nil {
 		return nil, errors.Join(core.ErrEncryptionFailure, err)
 	}
@@ -130,13 +137,12 @@ func newStreamEncrypter(namespace string, key core.Key, r io.Reader, segSize int
 	header := make([]byte, streamHeaderSize)
 	header[0] = streamVersion
 	header[1] = streamAlgAES256GCMHKDF
-	binary.BigEndian.PutUint32(header[2:6], uint32(segSize)) // #nosec G115 -- bounded above
-	if _, err := io.ReadFull(rand.Reader, header[6:]); err != nil {
+	binary.BigEndian.PutUint32(header[hdrKeyVersion:], binding.KeyVersion)
+	binary.BigEndian.PutUint32(header[hdrSegmentSize:], uint32(segSize)) // #nosec G115 -- bounded above
+	if _, err := io.ReadFull(rand.Reader, header[hdrSalt:]); err != nil {
 		return nil, errors.Join(core.ErrEncryptionFailure, err)
 	}
-	salt := header[6 : 6+streamSaltSize]
-
-	aead, err := streamAEAD(key, namespace, salt)
+	aead, err := streamAEAD(key, binding.Namespace, header[hdrSalt:hdrNoncePrefix])
 	if err != nil {
 		return nil, errors.Join(core.ErrEncryptionFailure, err)
 	}
@@ -145,7 +151,7 @@ func newStreamEncrypter(namespace string, key core.Key, r io.Reader, segSize int
 		src:         r,
 		aead:        aead,
 		header:      header,
-		noncePrefix: header[6+streamSaltSize:],
+		noncePrefix: header[hdrNoncePrefix:],
 		segSize:     segSize,
 		buf:         make([]byte, segSize+1),
 		obuf:        make([]byte, 0, segSize+streamTagSize),
@@ -216,7 +222,7 @@ type streamDecrypter struct {
 	err  error
 }
 
-func newStreamDecrypter(namespace string, key core.Key, r io.Reader) (io.Reader, error) {
+func newStreamDecrypter(binding core.Binding, key core.Key, r io.Reader) (io.Reader, error) {
 	if err := validateAES256Key(key); err != nil {
 		return nil, errors.Join(core.ErrDecryptionFailure, err)
 	}
@@ -228,12 +234,15 @@ func newStreamDecrypter(namespace string, key core.Key, r io.Reader) (io.Reader,
 	if header[0] != streamVersion || header[1] != streamAlgAES256GCMHKDF {
 		return nil, errors.Join(core.ErrDecryptionFailure, errStreamHeader, errors.New("unsupported version or algorithm"))
 	}
-	segSize := int(binary.BigEndian.Uint32(header[2:6]))
+	if binary.BigEndian.Uint32(header[hdrKeyVersion:]) != binding.KeyVersion {
+		return nil, errors.Join(core.ErrDecryptionFailure, errStreamHeader, errors.New("key version mismatch"))
+	}
+	segSize := int(binary.BigEndian.Uint32(header[hdrSegmentSize:]))
 	if segSize < minStreamSegmentSize || segSize > maxStreamSegmentSize {
 		return nil, errors.Join(core.ErrDecryptionFailure, errStreamHeader, errors.New("segment size out of range"))
 	}
 
-	aead, err := streamAEAD(key, namespace, header[6:6+streamSaltSize])
+	aead, err := streamAEAD(key, binding.Namespace, header[hdrSalt:hdrNoncePrefix])
 	if err != nil {
 		return nil, errors.Join(core.ErrDecryptionFailure, err)
 	}
@@ -243,7 +252,7 @@ func newStreamDecrypter(namespace string, key core.Key, r io.Reader) (io.Reader,
 		src:         r,
 		aead:        aead,
 		header:      header,
-		noncePrefix: header[6+streamSaltSize:],
+		noncePrefix: header[hdrNoncePrefix:],
 		cSegSize:    cSegSize,
 		buf:         make([]byte, cSegSize+1),
 		obuf:        make([]byte, 0, segSize),
