@@ -41,7 +41,7 @@ Scanners are clean: govulncheck reports 0 reachable vulnerabilities, gosec and s
 |---|---|---|---|---|
 | PE-01 | Critical | Keys | Cache eviction zeroes keys still in use (and the store's own key) | Fixed |
 | PE-02 | Critical | Crypto | Stream truncation is not detected | Fixed |
-| PE-03 | High | Crypto | Short ciphertext panics `Decrypt` | Open |
+| PE-03 | High | Crypto | Short ciphertext panics `Decrypt` | Fixed |
 | PE-04 | High | Keys | `Forget`/`Recover` report failure after cache expiry although they succeeded | Open |
 | PE-05 | High | Crypto | Values that look encrypted are never encrypted | Open |
 | PE-06 | High | Privacy | Subject ID is stored in clear in every ciphertext | Open |
@@ -89,8 +89,9 @@ The end-of-stream marker (`aes/256_gcm.go:156`, check at `:216`) is four unauthe
 
 ### High
 
-#### PE-03 Short ciphertext panics `Decrypt`. Confirmed.
+#### PE-03 Short ciphertext panics `Decrypt`. Fixed.
 `aes/256_gcm.go:89` slices `cipherTxt[:12]` with no length check. The field value `ENC..dTE=.AQID` (3-byte ciphertext) crashes the process: `slice bounds out of range [:12] with capacity 3`. Anyone who can write one field value can take the service down.
+- Done: `Decrypt` rejects anything shorter than nonce + tag before slicing. Regression: `TestAES256DecryptShortCiphertext`, `TestProtector_DecryptShortCiphertext`; `FuzzDecrypt` added.
 
 #### PE-04 `Forget`/`Recover` report failure after cache expiry. Confirmed.
 The cache wrapper's `DisableKey`/`ReEnableKey` call the origin first, then return `ErrKeyNotFound` if the key is not in the local cache (`memory/key_engine.go:200`, `:228`). PoC with a real wrapper: `Forget` returns "encryption key not found" while the origin key *was* disabled; `Recover` returns "cannot recover subject" while the origin key *was* re-enabled. For an erasure API this is the worst error mode: callers retry or escalate a GDPR request that already happened, or tell a user recovery failed when it worked. Since production engines are always wrapped (see method), this hits production.
