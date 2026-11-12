@@ -17,6 +17,11 @@ import (
 
 const testNS = "tenant-stream"
 
+// bind is the subject-key binding used by these tests.
+func bind(ns string) core.Binding {
+	return core.Binding{Namespace: ns, KeyVersion: 1}
+}
+
 func testKey(t testing.TB) core.Key {
 	t.Helper()
 	k, err := Key256GenFn(context.Background(), testNS, "subject-1")
@@ -37,7 +42,7 @@ func randBytes(t testing.TB, n int) []byte {
 
 func encryptWith(t testing.TB, key core.Key, ns string, plain []byte, segSize int) []byte {
 	t.Helper()
-	r, err := newStreamEncrypter(ns, key, bytes.NewReader(plain), segSize)
+	r, err := newStreamEncrypter(bind(ns), key, bytes.NewReader(plain), segSize)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +55,7 @@ func encryptWith(t testing.TB, key core.Key, ns string, plain []byte, segSize in
 
 // decryptAll returns the plaintext and the first error from the constructor or Read.
 func decryptAll(key core.Key, ns string, sealed []byte) ([]byte, error) {
-	r, err := newStreamDecrypter(ns, key, bytes.NewReader(sealed))
+	r, err := newStreamDecrypter(bind(ns), key, bytes.NewReader(sealed))
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +88,7 @@ func TestStreamDefaultSegmentThroughEncryptor(t *testing.T) {
 	key := testKey(t)
 	plain := randBytes(t, 3*DefaultStreamSegmentSize+123)
 
-	r, err := enc.EncryptStream(testNS, key, bytes.NewReader(plain))
+	r, err := enc.EncryptStream(bind(testNS), key, bytes.NewReader(plain))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +96,7 @@ func TestStreamDefaultSegmentThroughEncryptor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d, err := enc.DecryptStream(testNS, key, bytes.NewReader(sealed))
+	d, err := enc.DecryptStream(bind(testNS), key, bytes.NewReader(sealed))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +110,7 @@ func TestStreamDefaultSegmentThroughEncryptor(t *testing.T) {
 func TestStreamSegmentsIndependentOfSourceReads(t *testing.T) {
 	key := testKey(t)
 	plain := randBytes(t, 5*64+3)
-	r, err := newStreamEncrypter(testNS, key, iotest.OneByteReader(bytes.NewReader(plain)), 64)
+	r, err := newStreamEncrypter(bind(testNS), key, iotest.OneByteReader(bytes.NewReader(plain)), 64)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,20 +222,21 @@ func TestStreamRejectsBadHeader(t *testing.T) {
 	cases := map[string]func([]byte){
 		"v1":              func(b []byte) { b[0] = 1 },
 		"unknown alg":     func(b []byte) { b[1] = 9 },
-		"segment zero":    func(b []byte) { copy(b[2:6], []byte{0, 0, 0, 0}) },
-		"segment too big": func(b []byte) { copy(b[2:6], []byte{0xff, 0xff, 0xff, 0xff}) },
+		"segment zero":    func(b []byte) { copy(b[hdrSegmentSize:], []byte{0, 0, 0, 0}) },
+		"segment too big": func(b []byte) { copy(b[hdrSegmentSize:], []byte{0xff, 0xff, 0xff, 0xff}) },
+		"key version":     func(b []byte) { b[hdrKeyVersion+3] = 2 },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
 			forged := bytes.Clone(sealed)
 			mutate(forged)
-			_, err := newStreamDecrypter(testNS, key, bytes.NewReader(forged))
+			_, err := newStreamDecrypter(bind(testNS), key, bytes.NewReader(forged))
 			if !errors.Is(err, core.ErrDecryptionFailure) {
 				t.Fatalf("expect ErrDecryptionFailure from constructor, got %v", err)
 			}
 		})
 	}
-	if _, err := newStreamDecrypter(testNS, key, strings.NewReader("short")); !errors.Is(err, core.ErrDecryptionFailure) {
+	if _, err := newStreamDecrypter(bind(testNS), key, strings.NewReader("short")); !errors.Is(err, core.ErrDecryptionFailure) {
 		t.Fatalf("short header: expect ErrDecryptionFailure, got %v", err)
 	}
 }
@@ -238,7 +244,7 @@ func TestStreamRejectsBadHeader(t *testing.T) {
 func TestStreamPropagatesSourceError(t *testing.T) {
 	key := testKey(t)
 	boom := errors.New("boom")
-	r, err := newStreamEncrypter(testNS, key, iotest.ErrReader(boom), 32)
+	r, err := newStreamEncrypter(bind(testNS), key, iotest.ErrReader(boom), 32)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,12 +261,12 @@ func TestStreamAbandonedLeaksNoGoroutine(t *testing.T) {
 
 	before := runtime.NumGoroutine()
 	for range 50 {
-		e, err := enc.EncryptStream(testNS, key, bytes.NewReader(randBytes(t, 1024)))
+		e, err := enc.EncryptStream(bind(testNS), key, bytes.NewReader(randBytes(t, 1024)))
 		if err != nil {
 			t.Fatal(err)
 		}
 		_, _ = e.Read(make([]byte, 10))
-		d, err := enc.DecryptStream(testNS, key, bytes.NewReader(sealed))
+		d, err := enc.DecryptStream(bind(testNS), key, bytes.NewReader(sealed))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -280,7 +286,7 @@ func FuzzDecryptStream(f *testing.F) {
 	valid := encryptWith(f, key, testNS, plain, 16)
 	f.Add(valid)
 	f.Add(valid[:streamHeaderSize])
-	f.Add([]byte{2, 1, 0, 0, 0, 16})
+	f.Add([]byte{2, 1, 0, 0, 0, 1, 0, 0, 0, 16})
 	f.Fuzz(func(t *testing.T, in []byte) {
 		got, err := decryptAll(key, testNS, in)
 		if err == nil && !bytes.Equal(in, valid) {
@@ -290,4 +296,32 @@ func FuzzDecryptStream(f *testing.F) {
 			t.Fatalf("valid stream decrypted to %q", got)
 		}
 	})
+}
+
+// The stream header carries the binding's key version; a stream only opens
+// under the version it was written with (0 = caller-managed key).
+func TestStreamKeyVersionBound(t *testing.T) {
+	key := testKey(t)
+	for _, kv := range []uint32{0, 1, 7} {
+		b := core.Binding{Namespace: testNS, KeyVersion: kv}
+		r, err := newStreamEncrypter(b, key, strings.NewReader("payload"), 32)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sealed, err := io.ReadAll(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		d, err := newStreamDecrypter(b, key, bytes.NewReader(sealed))
+		if err != nil {
+			t.Fatalf("kv=%d: %v", kv, err)
+		}
+		if got, err := io.ReadAll(d); err != nil || string(got) != "payload" {
+			t.Fatalf("kv=%d: got %q, %v", kv, got, err)
+		}
+		other := core.Binding{Namespace: testNS, KeyVersion: kv + 1}
+		if _, err := newStreamDecrypter(other, key, bytes.NewReader(sealed)); !errors.Is(err, core.ErrDecryptionFailure) {
+			t.Fatalf("kv=%d opened as %d: expect ErrDecryptionFailure, got %v", kv, kv+1, err)
+		}
+	}
 }

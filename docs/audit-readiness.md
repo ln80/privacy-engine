@@ -136,7 +136,7 @@ The idempotency check `protector.go:219` skips any value matching `ENC.<v>.<b64>
 - **PE-20 Encrypt path bypasses the cache.** Confirmed: with the cache on, 5 `Encrypt` calls for the same subject make 5 origin `GetOrCreateKeys` calls (`memory/key_engine.go`, origin branch). The wrapper also holds the global write lock across that remote call, serialising all namespaces and ignoring `ctx` cancellation while waiting. Cost and availability issue for the KMS backend.
 - **PE-21 Caches are unbounded.** Key and token caches grow with every subject seen until TTL; a burst of unique subjects is a memory DoS and keeps more PII and keys resident. Add a size bound (LRU).
 - **PE-22 Build depends on `go.work`.** The uncommitted `go.sum` lacks `/go.mod` hashes for litter, testify, go-spew, go-difflib and yaml.v3. With `GOWORK=off`, the root package fails to build its tests; CI will fail. Locally, tests run against the workspace's struct-sensitive rather than v0.7.0. Run `GOWORK=off go mod tidy && GOWORK=off go test ./...` before committing, and in CI.
-- **PE-23 No key versioning.** The wire format has no key version or algorithm ID, so DEKs can never rotate, and swapping the `Encryptor` silently breaks old data. Add both in format v2 (see OWASP section).
+- **PE-23 No key versioning.** The wire format has no key version or algorithm ID, so DEKs can never rotate, and swapping the `Encryptor` silently breaks old data. Add both in format v2 (see OWASP section). Progress: `core.Encryptor` takes a `core.Binding{Namespace, KeyVersion}` and reports an algorithm ID; both are authenticated in field and stream ciphertexts, and the stream header carries the key version. The field wire format records them in step 4.
 
 ### Low (PE-24)
 
