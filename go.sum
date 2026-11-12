@@ -3,8 +3,8 @@ github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
-github.com/ln80/struct-sensitive v0.7.0 h1:LiAO+gOlGP6nXu9GZkx1B7fc9IC6QFZD4vvXhrL9ssc=
-github.com/ln80/struct-sensitive v0.7.0/go.mod h1:NHDer9Tp8Z+kNe3AzrOQMjIdQsufsT0hm4xWtDRCRYk=
+github.com/ln80/struct-sensitive v0.7.1-0.20261110164550-bdea8a7fdaf3 h1:KEI3SUlr+1c8AXJMcppTBJTP/13eXYhWIxgxZxt98P0=
+github.com/ln80/struct-sensitive v0.7.1-0.20261110164550-bdea8a7fdaf3/go.mod h1:AulM4jZKht8uqdQr2SqaEi8UlJHB4bUe7R3mWyJ9fU0=
 github.com/mitchellh/copystructure v1.2.0 h1:vpKXTN4ewci03Vljg/q9QvCGUDttBOGBIa15WveJJGw=
 github.com/mitchellh/copystructure v1.2.0/go.mod h1:qLl+cE2AmVv+CoeAwDPye/v+N2HKCj9FbZEVFJRxO9s=
 github.com/mitchellh/reflectwalk v1.0.2 h1:G2LzWKi524PWgd3mLHV8Y5k7s6XUvT0Gef6zxSIeXaQ=
