@@ -47,7 +47,8 @@ The single place to see where the audit work stands, across the three repos. Det
 | Forget/Recover no longer fail after cache eviction | PE-04 | Done |
 | Factory clear func no longer panics after eviction | PE-07 | Done |
 | Keys and token data redact in fmt, slog and JSON | PE-09 | Done |
-| Remaining hotfixes | PE-15, PE-16 | Next |
+| In-memory token store survives `Clear` | PE-15 | Done |
+| Remaining hotfixes | PE-16 | Next |
 | Then, before the external audit | tests (section 3), API cleanup (section 2), hygiene and security docs (sections 5–6), caches PE-20/21, PE-12, PE-14 | |
 
 Vault findings PE-25 to PE-30 move to elastic as PX-18 to PX-23.

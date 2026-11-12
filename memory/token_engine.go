@@ -159,7 +159,15 @@ func (t *TokenEngine) PurgeNamespace(ctx context.Context, namespace string) erro
 	return nil
 }
 
+// ClearCache implements core.TokenEngineCache.
+//
+// Without an origin the engine is the store, not a cache: clearing would
+// delete the only copy of every token (PE-15). It is then a no-op, forced or
+// not, as for the in-memory key engine.
 func (t *TokenEngine) ClearCache(ctx context.Context, namespace string, force bool) error {
+	if t.origin == nil {
+		return nil
+	}
 	cache := t.cacheOf(namespace)
 	return cache.clear(t.ttl, force)
 }

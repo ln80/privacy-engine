@@ -53,7 +53,7 @@ Scanners are clean: govulncheck reports 0 reachable vulnerabilities, gosec and s
 | PE-12 | Medium | API | Encrypt/Decrypt are not atomic over a batch | Open |
 | PE-13 | Medium | Keys | Erasure latency across instances is undocumented | Open |
 | PE-14 | Medium | Keys | `DeriveSubjectKey` output escapes crypto-shredding | Open |
-| PE-15 | Medium | Tokens | In-memory TokenEngine deletes its own data on `Clear` | Open |
+| PE-15 | Medium | Tokens | In-memory TokenEngine deletes its own data on `Clear` | Fixed |
 | PE-16 | Medium | Tokens | `WithPrefix` ignored by in-memory engine | Open |
 | PE-17 | Medium | Tokens | Token collisions not checked | Open |
 | PE-18 | Medium | Tokens | `ListTokens` returns all PII in clear, ignores paging | Open |
@@ -133,7 +133,7 @@ The idempotency check `protector.go:219` skips any value matching `ENC.<v>.<b64>
 - **PE-12 Batch Encrypt/Decrypt not atomic.** If struct #3 fails, structs #1-2 are already mutated; on `Encrypt` that leaves a batch half plaintext. Encrypt into copies, commit on success.
 - **PE-13 Erasure latency.** Other processes keep serving a forgotten subject's cached key until their TTL. Acceptable, but must be documented as a bounded erasure delay, with the TTL as the bound.
 - **PE-14 `DeriveSubjectKey` escapes crypto-shredding.** If callers persist the derived key, `Forget` no longer erases data encrypted with it. Document clearly; consider an API that never returns raw derived bytes.
-- **PE-15 In-memory TokenEngine deletes its own data.** `memory/token_engine.go:162` lacks the "store vs cache" guard the key engine has. PoC: with `memory.NewTokenEngine()`, a non-forced `Clear` (what `Monitor` does) deletes all tokens after ~1 s.
+- **PE-15 In-memory TokenEngine deletes its own data. Fixed:** as a store (no origin) `ClearCache` is a no-op, forced or not, as for the key engine; regression `TestTokenStoreSurvivesClearCache`. Was: `memory/token_engine.go:162` lacks the "store vs cache" guard the key engine has. PoC: with `memory.NewTokenEngine()`, a non-forced `Clear` (what `Monitor` does) deletes all tokens after ~1 s.
 - **PE-16 `WithPrefix` ignored** by the in-memory engine (PoC: plain UUID returned), while the README and example advertise it.
 - **PE-17 Token collisions not checked.** A custom `TokenGenFunc` that collides overwrites another person's mapping, so `Detokenize` returns the wrong person's data. Check-and-retry on insert.
 - **PE-18 `ListTokens` is a bulk PII export.** It returns every value in clear, and the memory implementation ignores `Limit`, `Cursor`, `Prefix` and `SearchText` (`memory/token_engine.go:20`). Needs paging, a clearly privileged name, and an audit hook.
