@@ -41,8 +41,8 @@ The single place to see where the audit work stands, across the three repos. Det
 | Require struct-sensitive v0.8.0; builds without `go.work` | PE-22 | Done |
 | Wire format v2, step 2: `GetKeys` reports missing-key states | PE-10 (contract) | Done |
 | Wire format v2, step 3: `Encryptor` takes `{namespace, keyVersion}` and `[]byte`; header-bound AAD; key version in stream header | PE-23 | Done |
-| Wire format v2, step 4: new field format, no regex, v1 removed | PE-23 | Next |
-| Wire format v2, step 5: idempotency by authentication, Decrypt state table, `ForgottenValue` | PE-05, PE-10 | |
+| Wire format v2, step 4: new field format, no regex, v1 removed | PE-23 | Done |
+| Wire format v2, step 5: idempotency by authentication, Decrypt state table, `ForgottenValue` | PE-05, PE-10 | Next |
 | Wire format v2, step 6: format spec, pseudonymous-subject rule, statuses | PE-06 | |
 | Remaining hotfixes | PE-04, PE-07, PE-09, PE-15, PE-16 | |
 | Then, before the external audit | tests (section 3), API cleanup (section 2), hygiene and security docs (sections 5–6), caches PE-20/21, PE-12, PE-14 | |

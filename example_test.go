@@ -86,10 +86,11 @@ func Example() {
 		log.Fatal(err)
 	}
 
-	// Encrypted Output ex:
+	// Encrypted Output ex. Each value is "ENC." base64url(subject ID) "."
+	// base64url(algorithm | key version | nonce | ciphertext | tag):
 	// Profile{
-	//  Email: "ENC..NDQ1ZDRhYTMtNWUwNS00MDcxLWEwNzAtMDlhMTM5MTFkM2Ex.7Q61HTCUT+XZtzzGp3HsVoHk6o74kwdEHqY46kB4eflXnRwswgHRVlApRg7mp4bNH5zSppV2u40=",
-	//  Fullname: "ENC..NDQ1ZDRhYTMtNWUwNS00MDcxLWEwNzAtMDlhMTM5MTFkM2Ex.mNyZmcvUHTAKTMC+uY6f77bJ3sZ5+NYBZwWKj8zZ0sA4j8mOPz8188sV",
+	//  Email: "ENC.c3ViXzQ0NWQ0YWEzLTVlMDUtNDA3MS1hMDcwLTA5YTEzOTExZDNhMQ.AQAAAAF6WKvFL27d6qSmx4qG0-OQcOpt-aT44gq_og-epYZtgKrp2FrtrmnmozA50uUDgz6bXT05mx1x1g",
+	//  Fullname: "ENC.c3ViXzQ0NWQ0YWEzLTVlMDUtNDA3MS1hMDcwLTA5YTEzOTExZDNhMQ.AQAAAAFmmmUlER1itz4sjKMfNvpwwaD3NA6iSXmqQnEzxqnvNT4TIw_N9Et0Ozs",
 	// 	Role: "Teacher",
 	// }
 

@@ -1,101 +1,95 @@
 package privacy
 
 import (
+	"bytes"
 	"encoding/base64"
-	"strconv"
+	"errors"
+	"strings"
 	"testing"
 )
 
-func TestWireFormat(t *testing.T) {
-	b64 := func(str string) string {
-		return base64.StdEncoding.EncodeToString([]byte(str))
+func TestWireFormatRoundTrip(t *testing.T) {
+	for _, v := range []wireValue{
+		{subjectID: "u1", alg: 1, keyVersion: 1, ciphertext: []byte{0xde, 0xad}},
+		{subjectID: "445d4aa3-5e05-4071-a070-09a13911d3a1", alg: 1, keyVersion: 1, ciphertext: bytes.Repeat([]byte{7}, 45)},
+		{subjectID: "sub_ü/+=.?", alg: 0xff, keyVersion: 0xffffffff, ciphertext: []byte{0}},
+		{subjectID: strings.Repeat("s", maxWireSubjectID), alg: 1, keyVersion: 1, ciphertext: []byte{1}},
+	} {
+		encoded := encodeWireValue(v)
+		if !strings.HasPrefix(encoded, "ENC.") || strings.Count(encoded, ".") != 2 {
+			t.Fatalf("unexpected shape %q", encoded)
+		}
+		if strings.ContainsAny(encoded, "+/=") {
+			t.Fatalf("expect base64url without padding, got %q", encoded)
+		}
+		got, err := parseWireValue(encoded)
+		if err != nil {
+			t.Fatalf("%q: %v", encoded, err)
+		}
+		if got.subjectID != v.subjectID || got.alg != v.alg || got.keyVersion != v.keyVersion || !bytes.Equal(got.ciphertext, v.ciphertext) {
+			t.Fatalf("round trip mismatch: %+v != %+v", got, v)
+		}
 	}
+}
 
-	t.Run("new format detection", func(t *testing.T) {
-		tcs := []struct {
-			input           string
-			isWireFormatted bool
-		}{
-			{"", false},
-			{"ENC..", false},
-			{"ENC.." + b64("abc") + "." + "UM30Kh37phctoSNql2DUhpOOvIGdLKAqyoV45VQ=", true},
-			{"ENC." + "4" + "." + b64("abc") + "." + "UM30Kh37phctoSNql2DUhpOOvIGdLKAqyoV45VQ=", true},
-		}
+// A known value pins the byte layout: alg | keyVersion (BE) | ciphertext.
+func TestWireFormatLayout(t *testing.T) {
+	got := encodeWireValue(wireValue{subjectID: "u1", alg: 1, keyVersion: 1, ciphertext: []byte{0xaa, 0xbb}})
+	if want := "ENC.dTE.AQAAAAGquw"; got != want {
+		t.Fatalf("expect %q, got %q", want, got)
+	}
+}
 
-		for i, tc := range tcs {
-			t.Run("tc: "+strconv.Itoa(i), func(t *testing.T) {
-				if want, got := tc.isWireFormatted, isWireFormatted(tc.input); want != got {
-					t.Fatalf("expect isWireFormatted=%v for %q", want, tc.input)
-				}
-			})
-		}
-	})
+func TestWireFormatRejects(t *testing.T) {
+	url := base64.RawURLEncoding.EncodeToString
+	payload := url([]byte{1, 0, 0, 0, 1, 0xaa})
+	cases := map[string]string{
+		"empty":                    "",
+		"plaintext":                "alice@example.org",
+		"prefix only":              "ENC.",
+		"no payload":               "ENC." + url([]byte("u1")),
+		"empty subject":            "ENC.." + payload,
+		"empty payload":            "ENC." + url([]byte("u1")) + ".",
+		"extra part":               "ENC." + url([]byte("u1")) + "." + payload + ".x",
+		"v1 with version field":    "ENC..dTE=.AQID",
+		"v1 explicit version":      "ENC.2.dTE=.AQID",
+		"legacy pii form":          "<pii::dTE=:AQID",
+		"lowercase prefix":         "enc." + url([]byte("u1")) + "." + payload,
+		"std alphabet":             "ENC." + url([]byte("u1")) + ".+/+/",
+		"padding":                  "ENC.dTE=." + payload,
+		"non-canonical base64":     "ENC.dTF." + payload, // "dTF" decodes to "u1" with non-zero trailing bits
+		"header only":              "ENC." + url([]byte("u1")) + "." + url([]byte{1, 0, 0, 0, 1}),
+		"short header":             "ENC." + url([]byte("u1")) + "." + url([]byte{1, 0}),
+		"subject too long":         "ENC." + url(bytes.Repeat([]byte("s"), maxWireSubjectID+1)) + "." + payload,
+		"whitespace":               "ENC. " + url([]byte("u1")) + "." + payload,
+		"trailing newline payload": "ENC." + url([]byte("u1")) + "." + payload + "\n",
+	}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseWireValue(in); !errors.Is(err, ErrInvalidWireFormat) {
+				t.Fatalf("%q: expect ErrInvalidWireFormat, got %v", in, err)
+			}
+			if isWireFormatted(in) {
+				t.Fatalf("%q: expect not wire formatted", in)
+			}
+		})
+	}
+}
 
-	t.Run("legacy format backward compat", func(t *testing.T) {
-		tcs := []struct {
-			input           string
-			isWireFormatted bool
-		}{
-			{"<pii::", false},
-			{"<PII::UM30Kh37phctoSNql2DUhpOOvIGdLKAqyoV45VQ=", false},
-			{"<pii::" + b64("abc") + ":" + "UM30Kh37phctoSNql2DUhpOOvIGdLKAqyoV45VQ=", true},
-			{"<pii:" + "4" + ":" + b64("abc") + ":" + "UM30Kh37phctoSNql2DUhpOOvIGdLKAqyoV45VQ=", true},
-		}
-
-		for i, tc := range tcs {
-			t.Run("tc: "+strconv.Itoa(i), func(t *testing.T) {
-				if want, got := tc.isWireFormatted, isWireFormatted(tc.input); want != got {
-					t.Fatalf("expect isWireFormatted=%v for %q", want, tc.input)
-				}
-				if tc.isWireFormatted {
-					version, subjectID, cipher, err := parseWireFormat(tc.input)
-					if err != nil {
-						t.Fatal("expect err be nil, got", err)
-					}
-					if version < 1 {
-						t.Fatal("expect version >= 1, got", version)
-					}
-					if subjectID == "" {
-						t.Fatal("expect subjectID not empty")
-					}
-					if len(cipher) == 0 {
-						t.Fatal("expect cipher not empty")
-					}
-				}
-			})
-		}
-	})
-
-	t.Run("round trip", func(t *testing.T) {
-		subjectID := "user-123"
-		cipher := []byte("encrypted-data-bytes")
-
-		encoded := wireFormat(subjectID, cipher)
-		if !isWireFormatted(encoded) {
-			t.Fatalf("expect output to be wire formatted: %s", encoded)
-		}
-
-		version, gotSubject, gotCipher, err := parseWireFormat(encoded)
+// FuzzParseWireValue: parsing never panics, and every accepted value has
+// exactly one textual form (it re-encodes to the same string).
+func FuzzParseWireValue(f *testing.F) {
+	f.Add("ENC.dTE.AQAAAAGquw")
+	f.Add("ENC..dTE=.AQID")
+	f.Add("<pii::dTE=:AQID")
+	f.Add("ENC.dTE.AQAAAAE")
+	f.Fuzz(func(t *testing.T, in string) {
+		v, err := parseWireValue(in)
 		if err != nil {
-			t.Fatal("expect err be nil, got", err)
+			return
 		}
-		if version != 1 {
-			t.Fatalf("expect version 1, got %d", version)
-		}
-		if gotSubject != subjectID {
-			t.Fatalf("expect subjectID %q, got %q", subjectID, gotSubject)
-		}
-		if string(gotCipher) != string(cipher) {
-			t.Fatal("expect cipher to match")
-		}
-
-		encoded2 := wireFormat(subjectID, cipher, 2)
-		version2, _, _, err := parseWireFormat(encoded2)
-		if err != nil {
-			t.Fatal("expect err be nil, got", err)
-		}
-		if version2 != 2 {
-			t.Fatalf("expect version 2, got %d", version2)
+		if out := encodeWireValue(v); out != in {
+			t.Fatalf("accepted %q but it re-encodes to %q", in, out)
 		}
 	})
 }

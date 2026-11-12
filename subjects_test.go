@@ -65,11 +65,11 @@ func TestEncrypt_MultipleSubjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Each value names the subject whose key encrypted it.
-	if _, sub, _, err := parseWireFormat(rec.Payload); err != nil || sub != "rec-1" {
-		t.Fatalf("payload subject = %q, %v", sub, err)
+	if wv, err := parseWireValue(rec.Payload); err != nil || wv.subjectID != "rec-1" {
+		t.Fatalf("payload subject = %q, %v", wv.subjectID, err)
 	}
-	if _, sub, _, err := parseWireFormat(rec.Email); err != nil || sub != "author-1" {
-		t.Fatalf("email subject = %q, %v", sub, err)
+	if wv, err := parseWireValue(rec.Email); err != nil || wv.subjectID != "author-1" {
+		t.Fatalf("email subject = %q, %v", wv.subjectID, err)
 	}
 
 	// Forgetting the author erases the author's data only.
@@ -93,8 +93,8 @@ func TestEncrypt_MultipleSubjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i, want := range []string{"u1", "u2"} {
-		if _, sub, _, err := parseWireFormat(group.Members[i].Email); err != nil || sub != want {
-			t.Fatalf("member %d subject = %q, %v", i, sub, err)
+		if wv, err := parseWireValue(group.Members[i].Email); err != nil || wv.subjectID != want {
+			t.Fatalf("member %d subject = %q, %v", i, wv.subjectID, err)
 		}
 	}
 }

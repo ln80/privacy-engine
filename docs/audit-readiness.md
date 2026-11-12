@@ -61,7 +61,7 @@ Scanners are clean: govulncheck reports 0 reachable vulnerabilities, gosec and s
 | PE-20 | Medium | Cache | Encrypt path never uses the cache; global lock held during remote calls | Open |
 | PE-21 | Medium | Cache | Caches are unbounded | Open |
 | PE-22 | Medium | Build | Uncommitted `go.sum` incomplete; local tests depend on `go.work` | Fixed |
-| PE-23 | Medium | Keys | No key versioning, so no rotation and no crypto agility | Open |
+| PE-23 | Medium | Keys | No key versioning, so no rotation and no crypto agility | Fixed (format; rotation itself not built) |
 | PE-24 | Low | various | See "Low" list | Open |
 | PE-25 | High | Vault | Token vault stores PII in plaintext in three attributes, one of them an index key (elastic) | Open |
 | PE-26 | High | Vault | Vault, DEKs and their access policy share one table and one IAM policy (elastic) | Open |
@@ -136,7 +136,7 @@ The idempotency check `protector.go:219` skips any value matching `ENC.<v>.<b64>
 - **PE-20 Encrypt path bypasses the cache.** Confirmed: with the cache on, 5 `Encrypt` calls for the same subject make 5 origin `GetOrCreateKeys` calls (`memory/key_engine.go`, origin branch). The wrapper also holds the global write lock across that remote call, serialising all namespaces and ignoring `ctx` cancellation while waiting. Cost and availability issue for the KMS backend.
 - **PE-21 Caches are unbounded.** Key and token caches grow with every subject seen until TTL; a burst of unique subjects is a memory DoS and keeps more PII and keys resident. Add a size bound (LRU).
 - **PE-22 Build depends on `go.work`.** The uncommitted `go.sum` lacks `/go.mod` hashes for litter, testify, go-spew, go-difflib and yaml.v3. With `GOWORK=off`, the root package fails to build its tests; CI will fail. Locally, tests run against the workspace's struct-sensitive rather than v0.7.0. Run `GOWORK=off go mod tidy && GOWORK=off go test ./...` before committing, and in CI.
-- **PE-23 No key versioning.** The wire format has no key version or algorithm ID, so DEKs can never rotate, and swapping the `Encryptor` silently breaks old data. Add both in format v2 (see OWASP section). Progress: `core.Encryptor` takes a `core.Binding{Namespace, KeyVersion}` and reports an algorithm ID; both are authenticated in field and stream ciphertexts, and the stream header carries the key version. The field wire format records them in step 4.
+- **PE-23 No key versioning.** The wire format has no key version or algorithm ID, so DEKs can never rotate, and swapping the `Encryptor` silently breaks old data. Add both in format v2 (see OWASP section). Progress: `core.Encryptor` takes a `core.Binding{Namespace, KeyVersion}` and reports an algorithm ID; both are authenticated in field and stream ciphertexts, and the stream header carries the key version. Field values now record them (`ENC.<subject>.<alg | keyVersion | ciphertext>`) and Decrypt rejects an unknown algorithm or key version before the key lookup. Rotation itself (several DEK versions per subject) is not built; the format no longer stands in its way.
 
 ### Low (PE-24)
 
