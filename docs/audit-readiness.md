@@ -60,7 +60,7 @@ Scanners are clean: govulncheck reports 0 reachable vulnerabilities, gosec and s
 | PE-19 | Medium | Streams | Abandoned streams leak goroutines | Fixed |
 | PE-20 | Medium | Cache | Encrypt path never uses the cache; global lock held during remote calls | Open |
 | PE-21 | Medium | Cache | Caches are unbounded | Open |
-| PE-22 | Medium | Build | Uncommitted `go.sum` incomplete; local tests depend on `go.work` | Open |
+| PE-22 | Medium | Build | Uncommitted `go.sum` incomplete; local tests depend on `go.work` | Fixed |
 | PE-23 | Medium | Keys | No key versioning, so no rotation and no crypto agility | Open |
 | PE-24 | Low | various | See "Low" list | Open |
 | PE-25 | High | Vault | Token vault stores PII in plaintext in three attributes, one of them an index key (elastic) | Open |
@@ -411,7 +411,9 @@ Conclusion: PE-03 is the only crash the parsers showed in this budget. Keep thes
 
 ## 10. struct-sensitive contract to adopt
 
-This module requires `github.com/ln80/struct-sensitive v0.7.0`. The hardening is on that repo's `main` (`e76df16`, `e490169`) and is not in that tag. Bumping the requirement changes encrypt and decrypt. Do it as part of this hardening work, not as a silent `go.mod` edit. The findings are SS-01 through SS-13 in struct-sensitive `docs/audit-readiness.md`. The items below are what this module still has to change.
+**Adopted** on `fix/audit-hardening`: the module now requires struct-sensitive `bdea8a7` (pseudo-version `v0.7.1-0.20261110164550-bdea8a7fdaf3`) and `GOWORK=off go test -race ./...` passes. Replace it with a tagged release before publishing. The notes below are kept as the record of what changed.
+
+This module required `github.com/ln80/struct-sensitive v0.7.0`. The hardening is on that repo's `main` (`e76df16`, `e490169`) and is not in that tag. Bumping the requirement changes encrypt and decrypt. Do it as part of this hardening work, not as a silent `go.mod` edit. The findings are SS-01 through SS-13 in struct-sensitive `docs/audit-readiness.md`. The items below are what this module still has to change.
 
 ### Blocks the bump
 
