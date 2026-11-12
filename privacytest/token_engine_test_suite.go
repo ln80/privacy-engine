@@ -3,6 +3,7 @@ package privacytest
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ln80/privacy-engine/core"
@@ -118,5 +119,24 @@ func RunTokenEngineTest(t *testing.T, ctx context.Context, eng core.TokenEngine,
 	}
 	if got, want := len(fresh), 1; got != want {
 		t.Fatalf("expect result map length be %d, got %d", want, got)
+	}
+
+	// WithPrefix (PE-16): a new token starts with the prefix; an existing
+	// value keeps the token it already has.
+	prefixed := core.TokenData(randomID())
+	withPrefix := func(c *core.TokenizeConfig) { c.Prefix = "sub_" }
+	tokens, err := eng.Tokenize(ctx, namespace, []core.TokenData{prefixed}, withPrefix)
+	if err != nil {
+		t.Fatalf("expect err be nil, got: %v", err)
+	}
+	if token := tokens.Get(string(prefixed)).Token; !strings.HasPrefix(token, "sub_") || len(token) <= len("sub_") {
+		t.Fatalf("expect a token starting with %q, got %q", "sub_", token)
+	}
+	again, err := eng.Tokenize(ctx, namespace, []core.TokenData{prefixed}, withPrefix)
+	if err != nil {
+		t.Fatalf("expect err be nil, got: %v", err)
+	}
+	if again.Get(string(prefixed)).Token != tokens.Get(string(prefixed)).Token {
+		t.Fatalf("expect the same token on a second Tokenize")
 	}
 }

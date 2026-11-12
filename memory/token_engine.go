@@ -114,6 +114,9 @@ func (t *TokenEngine) Tokenize(ctx context.Context, namespace string, values []c
 			if err != nil {
 				return nil, err
 			}
+			// Same rule as the DynamoDB engine: the prefix goes before the
+			// generated token (PE-16).
+			newToken = cfg.Prefix + newToken
 			record := core.TokenRecord{
 				Token: newToken,
 				Value: value,
