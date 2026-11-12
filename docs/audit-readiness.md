@@ -120,6 +120,7 @@ The idempotency check `protector.go:219` skips any value matching `ENC.<v>.<b64>
 #### PE-10 Wrong namespace silently wipes PII. Confirmed.
 `Decrypt` treats "no key for this subject" as "subject forgotten" and replaces the field with the `replace` value. PoC: data encrypted by `tenant-a` and decrypted by a `tenant-b` protector returns `err == nil` and an empty email. If the caller then saves the struct, data is lost. The same happens with a mis-configured backend or a transient empty response.
 - Fix: distinguish "deleted/disabled" (engine knows the state) from "unknown key", and return an error for unknown. Consider binding the namespace into the wire value so mismatches are detected before key lookup.
+- Progress: `KeyEngine.GetKeys` now reports `Disabled`, `Deleted` or `Unknown` for every requested ID without an active key, tested in `privacytest` for every backend. `Protector.Decrypt` acts on it in wire format v2 (`wire-format-v2.md`, plan step 5); until then behaviour is unchanged.
 
 ### Medium
 

@@ -23,6 +23,10 @@ const (
 	StateActive   KeyState = "ACTIVE"
 	StateDisabled KeyState = "DISABLED"
 	StateDeleted  KeyState = "DELETED"
+
+	// StateUnknown is reported for a key ID the engine has no record of in the
+	// namespace: never created, or removed by PurgeNamespace. It is never stored.
+	StateUnknown KeyState = "UNKNOWN"
 )
 
 // KeyState presents encryption key lifecycle states
@@ -43,6 +47,9 @@ func ZeroKey(k Key) {
 		k[i] = 0
 	}
 }
+
+// KeyStates maps key IDs to their lifecycle state.
+type KeyStates map[string]KeyState
 
 // KeyMap presents a map of Keys indexed by keyID.
 type KeyMap map[string]Key
@@ -102,14 +109,17 @@ func NewKeyEngineConfig() KeyEngineConfig {
 // KeyEngine presents the service responsible for managing encryption keys.
 type KeyEngine interface {
 
-	// GetKeys returns a map of keys for the given keyIDs within the given namespace.
-	// It doesn't return a key if it's disabled or deleted.
-	// The total count of the result should be less or equal to keyIDs' count.
-	// The returned map of keys is indexed by keyIDs.
+	// GetKeys returns the active keys for the given keyIDs within the given namespace,
+	// and the state of every requested keyID that has no active key.
+	//
+	// Each requested keyID appears in exactly one of the two maps. missing holds
+	// StateDisabled, StateDeleted or StateUnknown (no record in the namespace,
+	// including after PurgeNamespace), so callers can tell a forgotten subject
+	// from one that never existed. Both maps are indexed by keyID.
 	//
 	// Each key is a copy the caller owns and may pass to ZeroKey.
 	// The engine keeps a separate copy and may zero that copy on delete, eviction, or purge.
-	GetKeys(ctx context.Context, namespace string, keyIDs []string) (keys KeyMap, err error)
+	GetKeys(ctx context.Context, namespace string, keyIDs []string) (keys KeyMap, missing KeyStates, err error)
 
 	// GetOrCreateKeys returns the existing keys for the given keyIDs
 	// within the given namespace and creates new ones for the fresh new keyIDs.

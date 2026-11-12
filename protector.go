@@ -303,7 +303,7 @@ func (p *protector) Decrypt(ctx context.Context, structPtrs ...any) (err error) 
 	}
 	slices.Sort(subjectIDs)
 	subjectIDs = slices.Compact(subjectIDs)
-	keys, err := p.KeyEngine.GetKeys(ctx, p.namespace, subjectIDs)
+	keys, _, err := p.KeyEngine.GetKeys(ctx, p.namespace, subjectIDs)
 	if err != nil {
 		return
 	}
@@ -385,7 +385,7 @@ func (p *protector) DecryptStream(ctx context.Context, subID string, r io.Reader
 		return nil, errors.New("empty subject id")
 	}
 
-	keys, err := p.KeyEngine.GetKeys(ctx, p.namespace, []string{subID})
+	keys, _, err := p.KeyEngine.GetKeys(ctx, p.namespace, []string{subID})
 	if err != nil {
 		return nil, err
 	}
@@ -415,7 +415,7 @@ func (p *protector) DeriveSubjectKey(ctx context.Context, subID, purpose string)
 		return nil, errors.New("subject id too long")
 	}
 
-	keys, err := p.KeyEngine.GetKeys(ctx, p.namespace, []string{subID})
+	keys, _, err := p.KeyEngine.GetKeys(ctx, p.namespace, []string{subID})
 	if err != nil {
 		return nil, err
 	}
