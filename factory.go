@@ -92,11 +92,16 @@ func (f *factory) Instance(namespace string) (Protector, FactoryClearFunc) {
 	}
 	entry.lastUsedAt = time.Now()
 
+	// The clear func keeps the protector it was handed out with. It must not
+	// read the registry: Monitor may have evicted the entry by the time it runs
+	// (a nil dereference), and the read would race with the map (PE-07).
+	// Clearing an evicted protector is harmless: it only wipes its own cache.
+	prot := entry.protector
 	clearFunc := func() {
-		_ = f.reg[namespace].protector.Clear(context.Background(), true)
+		_ = prot.Clear(context.Background(), true)
 	}
 
-	return entry.protector, clearFunc
+	return prot, clearFunc
 }
 
 func (f *factory) clear(ctx context.Context, force bool) {

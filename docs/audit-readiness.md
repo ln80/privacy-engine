@@ -45,7 +45,7 @@ Scanners are clean: govulncheck reports 0 reachable vulnerabilities, gosec and s
 | PE-04 | High | Keys | `Forget`/`Recover` report failure after cache expiry although they succeeded | Fixed |
 | PE-05 | High | Crypto | Values that look encrypted are never encrypted | Fixed |
 | PE-06 | High | Privacy | Subject ID is stored in clear in every ciphertext | Accepted: documented rule |
-| PE-07 | High | Factory | Clear func panics after eviction (data race) | Open |
+| PE-07 | High | Factory | Clear func panics after eviction (data race) | Fixed |
 | PE-08 | High | Crypto | Key length not enforced (AES-128 silently accepted) | Fixed |
 | PE-09 | High | Leakage | Keys and PII leak through `%#v`, `encoding/json` and `log/slog` | Open |
 | PE-10 | High | Integrity | Decrypting with the wrong namespace silently wipes PII | Fixed |
@@ -107,8 +107,9 @@ The idempotency check `protector.go:219` skips any value matching `ENC.<v>.<b64>
 - Fix (format v2): store an opaque key reference instead, e.g. a random key ID kept by the KeyEngine, or `HMAC(namespace secret, subjectID)`.
 - Resolution: not applied, after review. The subject stays in the value because it makes values self-describing (they decrypt into any type, copies keep following their owner's key and are shredded with it, rotation and audit jobs need no domain types), while the record already stores the same subject in clear in its `subjectID` field. An opaque reference would hide nothing the record does not show. The real risk, a direct identifier used as subject, is closed by a rule in the README, the package godoc and `wire-format-v2.md` section 6: subject IDs must be pseudonymous (random IDs or tokenizer tokens). The rationale is recorded for the auditor in `wire-format-v2.md` sections 6 and 8.
 
-#### PE-07 Factory clear func panics after eviction. Confirmed.
+#### PE-07 Factory clear func panics after eviction. Fixed.
 `factory.go:96` reads `f.reg[namespace]` without the lock and dereferences it. After `Monitor` evicts the entry, the documented `defer clear()` panics with a nil-pointer dereference. It is also a data race on the map.
+- Done: the clear func captures the protector handed out by `Instance` and never reads the registry. Clearing an evicted protector only wipes its own cache. Regression: `TestFactory_ClearFuncAfterEviction` (panics without the fix; concurrent Instance, eviction and clear funcs are clean under `-race`).
 
 #### PE-08 Key length not enforced. Fixed.
 `aes.NewCipher` accepts 16/24/32-byte keys, so a 16-byte key from a custom `KeyGen`, a backend bug, or `EncryptStreamWithKey` used to silently give AES-128 while the docs promise AES-256. A 32-byte all-zero key was accepted too. `Encrypt`, `Decrypt`, `EncryptStream`, and `DecryptStream` now reject any key that is not 32 bytes or is all zeros.
