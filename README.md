@@ -172,10 +172,29 @@ See [privacy-engine.elastic](https://github.com/ln80/privacy-engine.elastic) for
 Encrypted field values are stored as:
 
 ```
-ENC.<version>.<base64(subjectID)>.<base64(ciphertext)>
+ENC.<base64url(subjectID)>.<base64url(alg | keyVersion | nonce | ciphertext | tag)>
 ```
 
-The `ENC.` prefix is used for idempotency detection (fields already encrypted are not re-encrypted). Legacy `<pii:...` format is accepted during decryption for backward compatibility.
+The value names the subject whose key encrypted it, so it can be decrypted
+into any struct and keeps following that subject when copied. The algorithm
+ID and key version are authenticated with the namespace. Only this format is
+parsed. The full specification is in [docs/wire-format-v2.md](docs/wire-format-v2.md).
+
+| On `Encrypt`, a field that… | Result |
+|---|---|
+| is plaintext | encrypted under the field's subject |
+| is already encrypted and authenticates under its subject's key | kept as is (idempotent) |
+| is encrypted for a forgotten subject | kept as is (it is shredded) |
+| looks encrypted but does not authenticate | `ErrValueNotAuthentic` |
+| names a subject unknown in the namespace | `ErrKeyUnknown` |
+
+| On `Decrypt`, the value's subject key is… | Result |
+|---|---|
+| active | plaintext; a value that does not authenticate is an error |
+| disabled or deleted (forgotten) | the tag's `replace=` value, or `ProtectorConfig.ForgottenValue` |
+| unknown (never created, purged, wrong namespace) | `ErrKeyUnknown`, field untouched |
+
+Every struct is all-or-nothing: on error, none of its fields change.
 
 ## License
 
