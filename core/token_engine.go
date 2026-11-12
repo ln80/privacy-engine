@@ -18,12 +18,10 @@ var (
 )
 
 // TokenData presents a sensitive data that should be tokenized.
+//
+// TokenData redacts itself in fmt (every verb), log/slog, encoding/json and
+// encoding text (see redact.go). Use Reveal to get the value.
 type TokenData string
-
-// String does redacts the token data. This enhance security when dealing with loggings libraries
-func (t TokenData) String() string {
-	return "**TOKEN DATA**"
-}
 
 // Reveal returns the string value of token data as the `String` method redacts
 // data by default.

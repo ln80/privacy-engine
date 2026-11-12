@@ -47,7 +47,7 @@ Scanners are clean: govulncheck reports 0 reachable vulnerabilities, gosec and s
 | PE-06 | High | Privacy | Subject ID is stored in clear in every ciphertext | Accepted: documented rule |
 | PE-07 | High | Factory | Clear func panics after eviction (data race) | Fixed |
 | PE-08 | High | Crypto | Key length not enforced (AES-128 silently accepted) | Fixed |
-| PE-09 | High | Leakage | Keys and PII leak through `%#v`, `encoding/json` and `log/slog` | Open |
+| PE-09 | High | Leakage | Keys and PII leak through `%#v`, `encoding/json` and `log/slog` | Fixed |
 | PE-10 | High | Integrity | Decrypting with the wrong namespace silently wipes PII | Fixed |
 | PE-11 | Medium | Crypto | Field swap not detected (AAD binds namespace only) | Accepted risk (narrowed) |
 | PE-12 | Medium | API | Encrypt/Decrypt are not atomic over a batch | Open |
@@ -114,12 +114,13 @@ The idempotency check `protector.go:219` skips any value matching `ENC.<v>.<b64>
 #### PE-08 Key length not enforced. Fixed.
 `aes.NewCipher` accepts 16/24/32-byte keys, so a 16-byte key from a custom `KeyGen`, a backend bug, or `EncryptStreamWithKey` used to silently give AES-128 while the docs promise AES-256. A 32-byte all-zero key was accepted too. `Encrypt`, `Decrypt`, `EncryptStream`, and `DecryptStream` now reject any key that is not 32 bytes or is all zeros.
 
-#### PE-09 Keys and PII leak through `%#v`, JSON and slog. Confirmed.
+#### PE-09 Keys and PII leak through `%#v`, JSON and slog. Fixed.
 `core.Key.String()` and `core.TokenData.String()` redact only `%v`/`%s`. PoC output:
 - `fmt.Sprintf("%#v", key)` prints `core.Key{0x1, 0x2, 0x3}`.
 - `json.Marshal` prints the key as base64 and `TokenData` in clear.
 - `slog` JSON handler logs `"key":"AQID","data":"alice@x.io"` and the same for `TokenRecord`.
 - Fix: implement `GoString`, `slog.LogValuer` (`LogValue`) and `MarshalJSON`/`MarshalText` (redact, or return an error) on `Key` and `TokenData`; add tests per format.
+- Done (`core/redact.go`): `Key`, `IDKey` and `TokenData` implement `fmt.Formatter` (every verb, not only `%#v`: `%d` also printed key bytes), `GoString`, `LogValue`, `MarshalText` and `MarshalJSON`, all printing a fixed placeholder. Marshaling redacts rather than fails, so log lines holding these values still render. Two leaks beyond the PoC were found and closed: `IDKey` keeps its key in an unexported field, which `fmt` prints without calling any method; and `encoding/json` uses a string-kind map key directly, so `ValueTokenMap` put every token value in clear in its keys (it now encodes as a sorted list of redacted records). Explicit access is unchanged: `Reveal()`, `[]byte(key)`, `IDKey.Key()`. Regression: `core/redact_test.go` checks 11 fmt verbs plus Sprint, JSON (direct, nested, map keys) and both slog handlers for the secret in raw, hex, base64 and decimal form. Limit: a map keyed by `TokenData` declared outside this package, or an unexported field of these types in caller structs, can still leak through JSON or fmt; documented in `redact.go`.
 
 #### PE-10 Wrong namespace silently wipes PII. Fixed.
 `Decrypt` treats "no key for this subject" as "subject forgotten" and replaces the field with the `replace` value. PoC: data encrypted by `tenant-a` and decrypted by a `tenant-b` protector returns `err == nil` and an empty email. If the caller then saves the struct, data is lost. The same happens with a mis-configured backend or a transient empty response.
