@@ -505,3 +505,43 @@ func BenchmarkProtector(b *testing.B) {
 		}
 	})
 }
+
+// originOnly hides KeyEngineCache from an in-memory store, so NewProtector
+// wraps it in the cache wrapper exactly as it does a production backend.
+type originOnly struct{ core.KeyEngine }
+
+// PE-04 regression through the public API: Forget and Recover succeed after
+// the cache was cleared, and report the origin's state.
+func TestProtector_ForgetRecoverAfterCacheClear(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewKeyEngine()
+	p := NewProtector("tenant-pe04", originOnly{store})
+
+	pf := &Profile{UserID: "u1", Fullname: "Alice", Gender: "F"}
+	if err := p.Encrypt(ctx, pf); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.Clear(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Forget(ctx, "u1"); err != nil {
+		t.Fatalf("Forget after Clear: %v", err)
+	}
+	if _, missing, _ := store.GetKeys(ctx, "tenant-pe04", []string{"u1"}); missing["u1"] != core.StateDisabled {
+		t.Fatalf("expect the store key disabled, got %v", missing)
+	}
+
+	if err := p.Clear(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Recover(ctx, "u1"); err != nil {
+		t.Fatalf("Recover after Clear: %v", err)
+	}
+	if err := p.Decrypt(ctx, pf); err != nil {
+		t.Fatal(err)
+	}
+	if pf.Gender != "F" {
+		t.Fatalf("expect data readable after Recover, got %q", pf.Gender)
+	}
+}

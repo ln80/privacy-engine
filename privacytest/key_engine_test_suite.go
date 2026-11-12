@@ -243,6 +243,42 @@ func RunKeyEngineTest(t *testing.T, ctx context.Context, eng core.KeyEngine, opt
 	if want, got := keyIDs[:1], keys.KeyIDs(); !keysEqual(want, got) {
 		t.Fatalf("expect %v, %v be equals", want, got)
 	}
+
+	// Cache engines (PE-04): once the cache no longer holds a key, DisableKey
+	// and ReEnableKey still report the origin's result, and reads follow it.
+	if cache, ok := eng.(core.KeyEngineCache); ok && cache.Origin() != nil {
+		cacheNS := namespace + "-cache"
+		id := randomID()
+		if _, err := eng.GetOrCreateKeys(ctx, cacheNS, []string{id}, nil); err != nil {
+			t.Fatalf("expect err be nil, got: %v", err)
+		}
+		if err := cache.ClearCache(ctx, cacheNS, true); err != nil {
+			t.Fatalf("expect err be nil, got: %v", err)
+		}
+		if err := eng.DisableKey(ctx, cacheNS, id); err != nil {
+			t.Fatalf("DisableKey after cache clear: expect nil, got: %v", err)
+		}
+		_, missing, err = eng.GetKeys(ctx, cacheNS, []string{id})
+		if err != nil {
+			t.Fatalf("expect err be nil, got: %v", err)
+		}
+		assertMissing(t, missing, core.KeyStates{id: core.StateDisabled})
+
+		if err := cache.ClearCache(ctx, cacheNS, true); err != nil {
+			t.Fatalf("expect err be nil, got: %v", err)
+		}
+		if err := eng.ReEnableKey(ctx, cacheNS, id); err != nil {
+			t.Fatalf("ReEnableKey after cache clear: expect nil, got: %v", err)
+		}
+		keys, missing, err = eng.GetKeys(ctx, cacheNS, []string{id})
+		if err != nil {
+			t.Fatalf("expect err be nil, got: %v", err)
+		}
+		if want, got := []string{id}, keys.KeyIDs(); !keysEqual(want, got) {
+			t.Fatalf("expect %v, %v be equals", want, got)
+		}
+		assertMissing(t, missing, core.KeyStates{})
+	}
 }
 
 // assertMissing checks the states GetKeys reports for IDs with no active key.

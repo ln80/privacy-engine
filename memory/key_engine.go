@@ -220,7 +220,24 @@ func (e *engine) GetOrCreateKeys(ctx context.Context, namespace string, keyIDs [
 	return keys, nil
 }
 
+// invalidate drops a cached entry and wipes its key. Used by the cache after
+// the origin changed a key's state: the origin is the source of truth, and the
+// next read refetches it. Dropping a disabled key also stops keeping it in memory.
+func (e *engine) invalidate(namespace, keyID string) {
+	cache := e.cacheOf(namespace)
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if k, ok := cache[keyID]; ok {
+		core.ZeroKey(k.Key)
+		delete(cache, keyID)
+	}
+}
+
 // DisableKey implements core.KeyEngine
+//
+// As a cache, the result is the origin's: once the origin succeeds, the cached
+// entry, present or not, cannot turn that success into an error (PE-04).
 func (e *engine) DisableKey(ctx context.Context, namespace, keyID string) error {
 	if e.origin != nil {
 		if err := e.origin.DisableKey(ctx, namespace, keyID); err != nil {
@@ -228,6 +245,8 @@ func (e *engine) DisableKey(ctx context.Context, namespace, keyID string) error 
 			// and supposed not to propagate infra error
 			return err
 		}
+		e.invalidate(namespace, keyID)
+		return nil
 	}
 
 	cache := e.cacheOf(namespace)
@@ -251,11 +270,15 @@ func (e *engine) DisableKey(ctx context.Context, namespace, keyID string) error 
 }
 
 // ReEnableKey implements core.KeyEngine
+//
+// As a cache, the result is the origin's, as for DisableKey.
 func (e *engine) ReEnableKey(ctx context.Context, namespace, keyID string) error {
 	if e.origin != nil {
 		if err := e.origin.ReEnableKey(ctx, namespace, keyID); err != nil {
 			return err
 		}
+		e.invalidate(namespace, keyID)
+		return nil
 	}
 
 	cache := e.cacheOf(namespace)
