@@ -2,16 +2,18 @@
 
 | | |
 |---|---|
-| Status | Proposal, revision 2, for discussion. Nothing here is implemented yet |
+| Status | Agreed design (revision 3). Implementation in progress on this branch |
 | Branch | `fix/audit-hardening` |
 | Findings addressed | PE-03, PE-05, PE-10, PE-23 in the format; PE-06 by a documented rule; PE-11 out of scope (section 7) |
-| Compatibility | None kept. v1 values (`ENC.` and `<pii:`) stop being readable. There is no deployed data to keep |
+| Compatibility | None kept. v1 values and the legacy `<pii:` form are not parsed at all. There is no deployed data to keep |
 | Related | Stream format v2 is done (`aes/stream.go`, PE-02). This document covers field values |
 
 **Revision 2 changes.** Revision 1 removed the subject ID from the value and added a field subkey and subject binding in the AAD. After review:
 - the subject ID **stays** in the value (section 3 explains why v1 had it);
 - **no field subkey**: field values use the DEK directly;
 - the AAD binds the **namespace and the header** only.
+
+**Revision 3 changes.** D-C agreed (fail closed). D-D: the prefix stays `ENC.`. With no legacy to support there is no version field in the text: the first payload byte identifies the format and algorithm together, and only v2 is parsed.
 
 ## 1. Why change the format
 
@@ -29,7 +31,7 @@ ENC..dTE=.q2b0…     ← subject "u1", version empty (= 1)
 | PE-05 | Any input matching the regex is stored as "already encrypted", including attacker input naming another subject | Idempotency decided by authentication |
 | PE-10 | A value in the wrong namespace, or a misconfigured backend, silently becomes the "forgotten" placeholder | Key engine reports *why* a key is missing; unknown is an error |
 | PE-06 | The value names its subject in clear | Kept on purpose; subject IDs must be pseudonymous (section 3) |
-| – | Regex parsing, two prefixes, standard base64 with padding | One prefix, base64url without padding, length-checked binary payload |
+| – | Regex parsing, two prefixes, a text version field, standard base64 with padding | One prefix, base64url without padding, length-checked binary payload whose first byte is the format/algorithm ID |
 
 ## 2. The mental model
 
@@ -72,24 +74,24 @@ doconvoy already follows it: subjects are `sub_`/`rcp_` tokens, user, secret, re
 ## 4. Layout
 
 ```
-value   = "ENC2." base64url(subjectID) "." base64url(payload)        (no padding)
+value   = "ENC." base64url(subjectID) "." base64url(payload)         (no padding)
 payload = alg (1) | keyVersion (4, BE) | nonce (12) | ciphertext | tag (16)
 ```
 
-- `alg = 0x01`: AES-256-GCM under the DEK. No other value is accepted.
+- `alg = 0x01`: field format v2, AES-256-GCM under the DEK. It is the only format ID, so it doubles as the format version; no other value is accepted.
 - `keyVersion` starts at `1`. Until rotation is designed, the protector writes 1 and rejects anything else with a clear error, not "forgotten".
 - Subject ID: 1 to 1024 bytes after decoding.
 - Payload: at least `1 + 4 + 12 + 16 = 33` bytes, checked before any slicing (PE-03).
 - Parsing is a split on `.` plus strict base64url decoding, with no regex. Exactly three parts; anything else is "not a v2 value".
-- base64url without padding makes values safe in URLs, JSON, DynamoDB keys and file names, and keeps them distinct from v1.
+- base64url without padding makes values safe in URLs, JSON, DynamoDB keys and file names.
 
 Example: plaintext `alice@example.org` (17 bytes), subject a 36-character UUID:
 
 ```
-ENC2.<48 chars of subject>.<67 chars of payload>     121 characters (v1: 114)
+ENC.<48 chars of subject>.<67 chars of payload>      120 characters (v1: 114)
 ```
 
-The 7 extra characters are the algorithm and key-version header.
+The 6 extra characters are the algorithm and key-version header.
 
 ### Associated data
 
@@ -156,18 +158,20 @@ Key versions are **reserved, not implemented**. Rotation needs the key store to 
 
 Swapping two values of the **same subject and namespace** (email ↔ phone of the same person) still goes undetected. Only someone with write access to the database can do it, and they can only rearrange one person's own data. Binding the Go field path would block it, but renaming or moving a field would then make old data unreadable, which is a real hazard for event-sourced code like doconvoy. PE-11 stays open, documented as an accepted risk. If it is ever needed, a stable `bind=<name>` tag option can come in a new algorithm ID, with no format change.
 
-## 8. Decisions needed
+## 8. Decisions
 
-**D-C. A v2 value that does not authenticate under an active key, on Encrypt.** Recommendation: **error** (fail closed). The alternative, encrypting it as plaintext, is right for attacker input but hides a broken or tampered value. Only someone deliberately imitating the format would hit the error.
-
-**D-D. Prefix.** Recommendation: `ENC2.`, close to what operators already know.
+- **D1** Encryption context for wrapped DEKs: pluggable function (privacy-engine.elastic).
+- **D2** One CMK at this stage; the resolver keeps per-tenant CMKs possible later.
+- **D3** `Forget` is graceful by default; immediate deletion when forced.
+- **D-C** A v2 value that does not authenticate under an active key fails `Encrypt` (fail closed).
+- **D-D** Prefix `ENC.`; only this format is parsed.
 
 ## 9. Implementation plan (one commit each, on this branch)
 
 1. `fix(aes)`: reject ciphertext shorter than nonce + tag (PE-03), with the first `FuzzDecrypt`.
 2. `feat(core)`: `GetKeys` reports the state of missing keys; memory engine and `privacytest` updated.
 3. `feat(core,aes)`: `Encryptor` takes `{namespace, keyVersion}` and `[]byte`; header-bound AAD; stream header gains the key version.
-4. `feat`: field wire format v2 (PE-23): new parser and encoder, no regex.
+4. `feat`: field wire format v2 (PE-23): new parser and encoder, no regex; v1 and `<pii:` parsing removed.
 5. `fix`: idempotency by authentication (PE-05) and the Decrypt state table (PE-10), with `ForgottenValue`.
 6. `docs`: this file becomes the format spec; README rule on pseudonymous subject IDs (PE-06); audit statuses updated.
 
