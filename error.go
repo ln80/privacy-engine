@@ -1,5 +1,7 @@
 package privacy
 
+import "errors"
+
 // Error is a developer-friendly error wrapper that speaks privacy language.
 // Its base error contains more technical details,
 // and it can be enriched with meta-data, e.g., namespace and subject.
@@ -22,24 +24,36 @@ func (e Error) Message() string {
 	return e.msg
 }
 
-// Subject returns the associated subject to the error if it exists.
+// Subject returns the associated subject to the error if it exists,
+// looking through the whole wrapped chain.
 func (e Error) Subject() string {
 	if e.subject == "" {
-		if err, ok := e.Err.(Error); ok {
-			return err.Subject()
+		if inner, ok := innerError(e.Err); ok {
+			return inner.Subject()
 		}
 	}
 	return e.subject
 }
 
-// Namespace returns the associated namespace to the error if it exists.
+// Namespace returns the associated namespace to the error if it exists,
+// looking through the whole wrapped chain.
 func (e Error) Namespace() string {
 	if e.namespace == "" {
-		if err, ok := e.Err.(Error); ok {
-			return err.Namespace()
+		if inner, ok := innerError(e.Err); ok {
+			return inner.Namespace()
 		}
 	}
 	return e.namespace
+}
+
+// innerError finds the nearest Error wrapped in err, through fmt.Errorf and
+// errors.Join wrapping as well as direct nesting.
+func innerError(err error) (Error, bool) {
+	var inner Error
+	if err == nil || !errors.As(err, &inner) {
+		return Error{}, false
+	}
+	return inner, true
 }
 
 func (e Error) withNamespace(nspace string) Error {

@@ -43,12 +43,12 @@ Scanners are clean: govulncheck reports 0 reachable vulnerabilities, gosec and s
 | PE-02 | Critical | Crypto | Stream truncation is not detected | Fixed |
 | PE-03 | High | Crypto | Short ciphertext panics `Decrypt` | Fixed |
 | PE-04 | High | Keys | `Forget`/`Recover` report failure after cache expiry although they succeeded | Open |
-| PE-05 | High | Crypto | Values that look encrypted are never encrypted | Open |
+| PE-05 | High | Crypto | Values that look encrypted are never encrypted | Fixed |
 | PE-06 | High | Privacy | Subject ID is stored in clear in every ciphertext | Open |
 | PE-07 | High | Factory | Clear func panics after eviction (data race) | Open |
 | PE-08 | High | Crypto | Key length not enforced (AES-128 silently accepted) | Fixed |
 | PE-09 | High | Leakage | Keys and PII leak through `%#v`, `encoding/json` and `log/slog` | Open |
-| PE-10 | High | Integrity | Decrypting with the wrong namespace silently wipes PII | Open |
+| PE-10 | High | Integrity | Decrypting with the wrong namespace silently wipes PII | Fixed |
 | PE-11 | Medium | Crypto | Field swap not detected (AAD binds namespace only) | Open |
 | PE-12 | Medium | API | Encrypt/Decrypt are not atomic over a batch | Open |
 | PE-13 | Medium | Keys | Erasure latency across instances is undocumented | Open |
@@ -96,9 +96,10 @@ The end-of-stream marker (`aes/256_gcm.go:156`, check at `:216`) is four unauthe
 #### PE-04 `Forget`/`Recover` report failure after cache expiry. Confirmed.
 The cache wrapper's `DisableKey`/`ReEnableKey` call the origin first, then return `ErrKeyNotFound` if the key is not in the local cache (`memory/key_engine.go:200`, `:228`). PoC with a real wrapper: `Forget` returns "encryption key not found" while the origin key *was* disabled; `Recover` returns "cannot recover subject" while the origin key *was* re-enabled. For an erasure API this is the worst error mode: callers retry or escalate a GDPR request that already happened, or tell a user recovery failed when it worked. Since production engines are always wrapped (see method), this hits production.
 
-#### PE-05 Values that look encrypted are never encrypted. Confirmed.
+#### PE-05 Values that look encrypted are never encrypted. Fixed.
 The idempotency check `protector.go:219` skips any value matching `ENC.<v>.<b64>.<b64>`. PoC: user input `ENC..YQ==.YQ==` is stored as-is. An attacker can also plant a value naming another subject's ID.
 - Fix: do not infer "already encrypted" from the value alone. Either require the value to authenticate under the struct's subject key before skipping, or track state outside the value; never trust the embedded subject ID over the struct's `subjectID` field.
+- Done: `Encrypt` keeps a value in wire format only if it authenticates under its own subject's active key, or if that subject is forgotten (a shredded value). Any other look-alike fails with `ErrValueNotAuthentic`; a value naming an unknown subject fails with `ErrKeyUnknown`. The embedded subject ID is kept and trusted only through authentication (decision in `wire-format-v2.md` section 3). Regression: `key_state_test.go`.
 
 #### PE-06 Subject ID in clear in every ciphertext. Confirmed.
 `wire_format.go:48` base64-encodes the subject ID into the value (PoC: `ENC..dTE=.` is `u1`). Subject IDs are often emails or account IDs, so every "encrypted" record still says whose it is, keeps saying so after crypto-shredding, and enables linkage across datasets. This conflicts with data minimisation and will be a headline item for a privacy-focused auditor.
@@ -117,10 +118,10 @@ The idempotency check `protector.go:219` skips any value matching `ENC.<v>.<b64>
 - `slog` JSON handler logs `"key":"AQID","data":"alice@x.io"` and the same for `TokenRecord`.
 - Fix: implement `GoString`, `slog.LogValuer` (`LogValue`) and `MarshalJSON`/`MarshalText` (redact, or return an error) on `Key` and `TokenData`; add tests per format.
 
-#### PE-10 Wrong namespace silently wipes PII. Confirmed.
+#### PE-10 Wrong namespace silently wipes PII. Fixed.
 `Decrypt` treats "no key for this subject" as "subject forgotten" and replaces the field with the `replace` value. PoC: data encrypted by `tenant-a` and decrypted by a `tenant-b` protector returns `err == nil` and an empty email. If the caller then saves the struct, data is lost. The same happens with a mis-configured backend or a transient empty response.
 - Fix: distinguish "deleted/disabled" (engine knows the state) from "unknown key", and return an error for unknown. Consider binding the namespace into the wire value so mismatches are detected before key lookup.
-- Progress: `KeyEngine.GetKeys` now reports `Disabled`, `Deleted` or `Unknown` for every requested ID without an active key, tested in `privacytest` for every backend. `Protector.Decrypt` acts on it in wire format v2 (`wire-format-v2.md`, plan step 5); until then behaviour is unchanged.
+- Progress: `KeyEngine.GetKeys` now reports `Disabled`, `Deleted` or `Unknown` for every requested ID without an active key, tested in `privacytest` for every backend. Done: `Decrypt` applies the placeholder only for disabled or deleted keys; an unknown key is `ErrKeyUnknown` and leaves the struct untouched (wrong namespace, purged tenant, misconfigured backend). Streams and `DeriveSubjectKey` report the same distinction. Regression: `key_state_test.go`.
 
 ### Medium
 

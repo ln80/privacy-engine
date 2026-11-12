@@ -26,6 +26,17 @@ var (
 	ErrPurgeNamespaceFailure = newErr("failed to purge namespace")
 	ErrCannotRecoverSubject  = newErr("cannot recover subject")
 	ErrSubjectForgotten      = newErr("subject is forgotten")
+
+	// ErrKeyUnknown means the key engine has no record of the subject in this
+	// namespace: never created, purged, or a value from another namespace or a
+	// misconfigured backend. Unlike a forgotten subject, the field is not
+	// replaced: the call fails and the value is left untouched.
+	ErrKeyUnknown = newErr("subject key is unknown in this namespace")
+
+	// ErrValueNotAuthentic means a field holds a value in wire format that
+	// does not authenticate under its subject's active key: tampered, forged,
+	// or encrypted elsewhere. Encrypt refuses to keep or re-encrypt it.
+	ErrValueNotAuthentic = newErr("value looks encrypted but does not authenticate")
 )
 
 // Protector presents the service's interface that encrypts, decrypts,
@@ -34,7 +45,10 @@ type Protector interface {
 
 	// Encrypt encrypts Personal data fields of the given structs pointers.
 	// It does its best to ensure atomicity in case of multiple structs pointers.
-	// It ensures idempotency and only encrypts fields once.
+	// It ensures idempotency and only encrypts fields once: a value already in
+	// wire format is kept only if it authenticates under its own subject's
+	// active key, or if that subject is forgotten (the value is shredded).
+	// Any other look-alike value fails with ErrValueNotAuthentic.
 	//
 	// Each field is encrypted under its own subject's key. By default a struct
 	// must use one subject: a second subjectID that governs data, or differing
@@ -44,11 +58,12 @@ type Protector interface {
 	Encrypt(ctx context.Context, structPts ...any) error
 
 	// Decrypt decrypts Personal data fields of the given structs pointers.
-	// It does its best to ensure in case of multiple structs pointers.
-	// It ensures idempotency and only decrypts fields once.
-	//
-	// It replaces the field value with a replacement message, defined in the tag,
-	// if the subject is forgotten. Otherwise, the field will be kept empty.
+	// Each struct is all-or-nothing. A field that is not in wire format is
+	// left as is. Each value's own subject selects its key:
+	//   - active key: the value is decrypted; one that does not authenticate is an error;
+	//   - disabled or deleted key (forgotten subject): the field gets the tag's
+	//     replace= option, or ProtectorConfig.ForgottenValue;
+	//   - unknown key: ErrKeyUnknown, and the field is left untouched.
 	Decrypt(ctx context.Context, structPts ...any) error
 
 	// EncryptStream reads plaintext from r and returns a reader of ciphertext.
@@ -130,6 +145,10 @@ type ProtectorConfig struct {
 	// declared subject. Off by default: one record, one key to forget.
 	// Decrypt reads the subject from each value and accepts either.
 	MultipleSubjects bool
+
+	// ForgottenValue replaces a field whose subject is forgotten, when the
+	// field's tag has no replace= option. Default "".
+	ForgottenValue string
 }
 
 // subjectKeyVersion is the only DEK version until rotation exists; it is bound
@@ -230,26 +249,35 @@ func (p *protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) 
 	slices.Sort(subjectIDs)
 	subjectIDs = slices.Compact(subjectIDs)
 
-	keys, err := p.KeyEngine.GetOrCreateKeys(ctx, p.namespace, subjectIDs, p.Encryptor.KeyGen())
+	// Values already in wire format may name other subjects (a copied value);
+	// their keys are needed to authenticate them.
+	valueSubjects, err := collectValueSubjects(structs)
 	if err != nil {
 		return err
 	}
-	defer zeroKeyMap(keys)
+
+	ring, err := p.encryptKeyRing(ctx, subjectIDs, valueSubjects)
+	if err != nil {
+		return err
+	}
+	defer zeroKeyMap(ring.keys)
 
 	fn := func(fr sensitive.FieldReplace, val string) (newVal string, err error) {
-		// Keys were fetched for every subject in use: a missing one was forgotten.
-		key, ok := keys[fr.SubjectID]
-		if !ok {
+		newVal = val
+		if val == "" {
+			return
+		}
+		// Idempotency (PE-05): decided by authentication, never by shape.
+		if wv, perr := parseWireValue(val); perr == nil {
+			err = p.checkEncrypted(fr, wv, ring)
+			return
+		}
+
+		key, state := ring.lookup(fr.SubjectID)
+		if state != core.StateActive {
 			err = ErrSubjectForgotten.withSubject(fr.SubjectID)
 			return
 		}
-		// idempotency: no need to re-encrypt field value if it's wire formatted.
-		// wire formatted implies, it's already encrypted
-		if isWireFormatted(val) {
-			newVal = val
-			return
-		}
-
 		encodedVal, err := p.Encryptor.Encrypt(p.subjectBinding(), key, []byte(val))
 		if err != nil {
 			return
@@ -293,62 +321,38 @@ func (p *protector) Decrypt(ctx context.Context, structPtrs ...any) (err error) 
 		return nil
 	}
 
-	subjectIDs := make([]string, 0)
-	fn := func(fr sensitive.FieldReplace, val string) (newVal string, err error) {
-		newVal = val
-		wv, err := parseWireValue(val)
-		if err != nil {
-			err = nil
-			return
-		}
-		subjectIDs = append(subjectIDs, wv.subjectID)
-		return
-	}
-	for idx, s := range structs {
-		if err = s.Replace(fn); err != nil {
-			err = fmt.Errorf("%w at #%d", err, idx)
-			return
-		}
-	}
-	slices.Sort(subjectIDs)
-	subjectIDs = slices.Compact(subjectIDs)
-	keys, _, err := p.KeyEngine.GetKeys(ctx, p.namespace, subjectIDs)
+	subjectIDs, err := collectValueSubjects(structs)
 	if err != nil {
 		return
 	}
-	defer zeroKeyMap(keys)
+	keys, states, err := p.KeyEngine.GetKeys(ctx, p.namespace, subjectIDs)
+	if err != nil {
+		return
+	}
+	ring := keyRing{keys: keys, states: states}
+	defer zeroKeyMap(ring.keys)
 
-	fn = func(fr sensitive.FieldReplace, val string) (newVal string, err error) {
-		wv, err := parseWireValue(val)
-		if err != nil {
+	fn := func(fr sensitive.FieldReplace, val string) (newVal string, err error) {
+		newVal = val
+		wv, perr := parseWireValue(val)
+		if perr != nil {
 			// Not a field value: a field that was never encrypted is left as is.
-			newVal = val
-			err = nil
-			return
-		}
-		// Checked before the key lookup: a value this protector cannot read is
-		// an error whatever its subject's state.
-		if wv.alg != p.Encryptor.Algorithm() {
-			err = fmt.Errorf("%w: unsupported algorithm %#x at %s", ErrInvalidWireFormat, wv.alg, fr.Path)
-			return
-		}
-		if wv.keyVersion != subjectKeyVersion {
-			err = fmt.Errorf("%w: unsupported key version %d at %s", ErrInvalidWireFormat, wv.keyVersion, fr.Path)
 			return
 		}
 
-		key, ok := keys[wv.subjectID]
-		if !ok {
-			newVal = fr.Options["replace"]
-			return
-		}
-
-		plain, err := p.Encryptor.Decrypt(p.subjectBinding(), key, wv.ciphertext)
+		plain, state, err := p.openValue(fr, wv, ring)
 		if err != nil {
-			return "", err
+			return
 		}
-		newVal = string(plain)
-		clear(plain)
+		switch state {
+		case core.StateActive:
+			newVal = string(plain)
+			clear(plain)
+		case core.StateDisabled, core.StateDeleted:
+			newVal = p.forgottenValue(fr)
+		default:
+			err = fmt.Errorf("%w at %s", ErrKeyUnknown.withSubject(wv.subjectID), fr.Path)
+		}
 		return
 	}
 
@@ -402,16 +406,11 @@ func (p *protector) DecryptStream(ctx context.Context, subID string, r io.Reader
 		return nil, errors.New("empty subject id")
 	}
 
-	keys, _, err := p.KeyEngine.GetKeys(ctx, p.namespace, []string{subID})
+	key, err := p.subjectKey(ctx, subID)
 	if err != nil {
 		return nil, err
 	}
-	defer zeroKeyMap(keys)
-
-	key, ok := keys[subID]
-	if !ok {
-		return nil, ErrSubjectForgotten.withSubject(subID)
-	}
+	defer core.ZeroKey(key)
 
 	return p.Encryptor.DecryptStream(p.subjectBinding(), key, r)
 }
@@ -432,16 +431,11 @@ func (p *protector) DeriveSubjectKey(ctx context.Context, subID, purpose string)
 		return nil, errors.New("subject id too long")
 	}
 
-	keys, _, err := p.KeyEngine.GetKeys(ctx, p.namespace, []string{subID})
+	parentKey, err := p.subjectKey(ctx, subID)
 	if err != nil {
 		return nil, err
 	}
-	defer zeroKeyMap(keys)
-
-	parentKey, ok := keys[subID]
-	if !ok {
-		return nil, ErrSubjectForgotten.withSubject(subID)
-	}
+	defer core.ZeroKey(parentKey)
 
 	info := make([]byte, 2+len(subID)+len(purpose))
 	binary.BigEndian.PutUint16(info, uint16(len(subID))) // #nosec G115 -- length validated above
@@ -521,6 +515,152 @@ func (p *protector) Recover(ctx context.Context, subID string) (err error) {
 
 	err = p.KeyEngine.ReEnableKey(ctx, p.namespace, subID)
 	return
+}
+
+// keyRing holds the keys fetched for one Encrypt or Decrypt call and the
+// state of every subject without an active key.
+type keyRing struct {
+	keys   core.KeyMap
+	states core.KeyStates
+}
+
+// lookup returns the subject's active key, or its state. A subject the
+// engine said nothing about is unknown.
+func (r keyRing) lookup(subjectID string) (core.Key, core.KeyState) {
+	if k, ok := r.keys[subjectID]; ok {
+		return k, core.StateActive
+	}
+	if st, ok := r.states[subjectID]; ok {
+		return nil, st
+	}
+	return nil, core.StateUnknown
+}
+
+// encryptKeyRing gets or creates the keys of the struct subjects, and only
+// reads the keys of other subjects named by values already in wire format.
+func (p *protector) encryptKeyRing(ctx context.Context, structSubjects, valueSubjects []string) (keyRing, error) {
+	keys, err := p.KeyEngine.GetOrCreateKeys(ctx, p.namespace, structSubjects, p.Encryptor.KeyGen())
+	if err != nil {
+		return keyRing{}, err
+	}
+	ring := keyRing{keys: keys, states: core.KeyStates{}}
+	// GetOrCreateKeys creates unknown subjects, so a struct subject it did not
+	// return is disabled or deleted: forgotten.
+	for _, id := range structSubjects {
+		if _, ok := keys[id]; !ok {
+			ring.states[id] = core.StateDisabled
+		}
+	}
+
+	others := make([]string, 0, len(valueSubjects))
+	for _, id := range valueSubjects {
+		if !slices.Contains(structSubjects, id) {
+			others = append(others, id)
+		}
+	}
+	if len(others) == 0 {
+		return ring, nil
+	}
+	otherKeys, states, err := p.KeyEngine.GetKeys(ctx, p.namespace, others)
+	if err != nil {
+		zeroKeyMap(keys)
+		return keyRing{}, err
+	}
+	for id, k := range otherKeys {
+		ring.keys[id] = k
+	}
+	for id, st := range states {
+		ring.states[id] = st
+	}
+	return ring, nil
+}
+
+// collectValueSubjects returns, sorted and unique, the subjects named by
+// field values already in wire format. It does not change the structs.
+func collectValueSubjects(structs []sensitive.Struct) ([]string, error) {
+	subjects := make([]string, 0)
+	collect := func(_ sensitive.FieldReplace, val string) (string, error) {
+		if wv, err := parseWireValue(val); err == nil {
+			subjects = append(subjects, wv.subjectID)
+		}
+		return val, nil
+	}
+	for idx, s := range structs {
+		if err := s.Replace(collect); err != nil {
+			return nil, fmt.Errorf("%w at #%d", err, idx)
+		}
+	}
+	slices.Sort(subjects)
+	return slices.Compact(subjects), nil
+}
+
+// openValue checks a parsed value's header and, when its subject's key is
+// active, decrypts it. It returns the subject's key state; plaintext is set
+// only for StateActive. A value that does not authenticate is an error.
+func (p *protector) openValue(fr sensitive.FieldReplace, wv wireValue, ring keyRing) (plain []byte, state core.KeyState, err error) {
+	// Checked before the key lookup: a value this protector cannot read is an
+	// error whatever its subject's state.
+	if wv.alg != p.Encryptor.Algorithm() {
+		return nil, "", fmt.Errorf("%w: unsupported algorithm %#x at %s", ErrInvalidWireFormat, wv.alg, fr.Path)
+	}
+	if wv.keyVersion != subjectKeyVersion {
+		return nil, "", fmt.Errorf("%w: unsupported key version %d at %s", ErrInvalidWireFormat, wv.keyVersion, fr.Path)
+	}
+
+	key, state := ring.lookup(wv.subjectID)
+	if state != core.StateActive {
+		return nil, state, nil
+	}
+	plain, err = p.Encryptor.Decrypt(p.subjectBinding(), key, wv.ciphertext)
+	if err != nil {
+		return nil, state, fmt.Errorf("%w at %s", err, fr.Path)
+	}
+	return plain, state, nil
+}
+
+// checkEncrypted decides whether Encrypt may keep a value already in wire
+// format (PE-05, decision D-C):
+//   - active key and it authenticates: keep;
+//   - forgotten subject: keep, it is a shredded value;
+//   - anything else: error, never re-encrypt a look-alike.
+func (p *protector) checkEncrypted(fr sensitive.FieldReplace, wv wireValue, ring keyRing) error {
+	plain, state, err := p.openValue(fr, wv, ring)
+	clear(plain)
+	switch {
+	case err != nil:
+		return fmt.Errorf("%w: %w", ErrValueNotAuthentic, err)
+	case state == core.StateActive, state == core.StateDisabled, state == core.StateDeleted:
+		return nil
+	default:
+		return fmt.Errorf("%w at %s", ErrKeyUnknown.withSubject(wv.subjectID), fr.Path)
+	}
+}
+
+// forgottenValue is the placeholder for a field whose subject is forgotten.
+func (p *protector) forgottenValue(fr sensitive.FieldReplace) string {
+	if v, ok := fr.Options["replace"]; ok {
+		return v
+	}
+	return p.ForgottenValue
+}
+
+// subjectKey returns the subject's active key for the stream and derivation
+// methods: ErrSubjectForgotten if it is disabled or deleted, ErrKeyUnknown
+// if the engine has no record of it.
+func (p *protector) subjectKey(ctx context.Context, subID string) (core.Key, error) {
+	keys, states, err := p.KeyEngine.GetKeys(ctx, p.namespace, []string{subID})
+	if err != nil {
+		return nil, err
+	}
+	key, state := keyRing{keys: keys, states: states}.lookup(subID)
+	switch state {
+	case core.StateActive:
+		return key, nil
+	case core.StateDisabled, core.StateDeleted:
+		return nil, ErrSubjectForgotten.withSubject(subID)
+	default:
+		return nil, ErrKeyUnknown.withSubject(subID)
+	}
 }
 
 // subjectBinding binds data encrypted under a subject's DEK.

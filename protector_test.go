@@ -389,12 +389,15 @@ func TestProtector_Purge(t *testing.T) {
 		t.Fatalf("expect %d detokenized values after purge, got %d", want, got)
 	}
 
-	// Decrypt of previously encrypted data yields replacement (key gone)
-	if err := p.Decrypt(ctx, &pf); err != nil {
-		t.Fatal("expect err be nil, got", err)
+	// Purged keys are hard-deleted, so the engine no longer knows the subject:
+	// decrypting the tenant's old data is ErrKeyUnknown, not a placeholder,
+	// and the ciphertext is left untouched.
+	sealed := pf.Fullname
+	if err := p.Decrypt(ctx, &pf); !errors.Is(err, ErrKeyUnknown) {
+		t.Fatal("expect ErrKeyUnknown, got", err)
 	}
-	if want, got := sensitive.MustFieldTag(pf, "Fullname").Options.Get("replace"), pf.Fullname; !reflect.DeepEqual(want, got) {
-		t.Fatalf("expect %v, %v be equals", want, got)
+	if pf.Fullname != sealed {
+		t.Fatalf("expect field untouched, got %q", pf.Fullname)
 	}
 }
 
