@@ -411,7 +411,7 @@ Conclusion: PE-03 is the only crash the parsers showed in this budget. Keep thes
 
 ## 10. struct-sensitive contract to adopt
 
-**Adopted** on `fix/audit-hardening`: the module now requires struct-sensitive `bdea8a7` (pseudo-version `v0.7.1-0.20261110164550-bdea8a7fdaf3`) and `GOWORK=off go test -race ./...` passes. Replace it with a tagged release before publishing. The notes below are kept as the record of what changed.
+**Adopted** on `fix/audit-hardening`: the module now requires struct-sensitive `v0.8.0` (tag of `bdea8a7`) and `GOWORK=off go test -race ./...` passes. The notes below are kept as the record of what changed.
 
 This module required `github.com/ln80/struct-sensitive v0.7.0`. The hardening is on that repo's `main` (`e76df16`, `e490169`) and is not in that tag. Bumping the requirement changes encrypt and decrypt. Do it as part of this hardening work, not as a silent `go.mod` edit. The findings are SS-01 through SS-13 in struct-sensitive `docs/audit-readiness.md`. The items below are what this module still has to change.
 
