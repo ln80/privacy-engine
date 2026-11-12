@@ -115,3 +115,27 @@ func TestFactory(t *testing.T) {
 	// assert Protector was deleted from registry even is not IDLE
 	assertProtectorCount(t, f.(*factory), 0)
 }
+
+// PE-07 regression: the clear func returned by Instance works after Monitor
+// evicted the entry, and does not race with the registry.
+func TestFactory_ClearFuncAfterEviction(t *testing.T) {
+	ctx := context.Background()
+	spy := &spyProtector{Protector: NewProtector("tenant-pe07", memory.NewKeyEngine()), Calls: NewFuncCalls()}
+	f := NewFactory(func(namespace string) Protector { return spy }).(*factory)
+
+	_, clear := f.Instance("tenant-pe07")
+	f.clear(ctx, true) // what Monitor does on shutdown or for an idle entry
+
+	clear() // used to panic: nil registry entry
+	spy.Calls.AssertCount(t, "Clear", 2)
+
+	// Concurrent Instance, eviction and clear funcs: clean under -race.
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Add(3)
+		go func() { defer wg.Done(); _, c := f.Instance("tenant-pe07"); c() }()
+		go func() { defer wg.Done(); f.clear(ctx, true) }()
+		go func() { defer wg.Done(); clear() }()
+	}
+	wg.Wait()
+}
