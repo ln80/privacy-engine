@@ -34,12 +34,10 @@ type KeyState string
 
 // Key presents the plain text value of an encryption key.
 // It is a []byte so the backing memory can be zeroed after use.
+//
+// Key redacts itself in fmt (every verb), log/slog, encoding/json and
+// encoding text (see redact.go). Use []byte(key) where the bytes are needed.
 type Key []byte
-
-// String overwrites the default to string behavior to protect the key sensitive value.
-func (k Key) String() string {
-	return "KEY-*****"
-}
 
 // ZeroKey overwrites the key's backing memory with zeros.
 func ZeroKey(k Key) {
