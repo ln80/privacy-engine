@@ -107,31 +107,37 @@ func (e *engine) cacheOf(namespace string) map[string]keyCache {
 }
 
 // GetKeys implements core.KeyEngine
-func (e *engine) GetKeys(ctx context.Context, namespace string, keyIDs []string) (core.KeyMap, error) {
+//
+// As a store, an ID with no entry is StateUnknown. As a cache, a cached
+// disabled or deleted entry reports its state, and the origin decides for IDs
+// not in the cache; states are passed through, never cached.
+func (e *engine) GetKeys(ctx context.Context, namespace string, keyIDs []string) (core.KeyMap, core.KeyStates, error) {
 	cache := e.cacheOf(namespace)
 
 	foundKeys := core.NewKeyMap()
+	missing := core.KeyStates{}
 	missedKeys := []string{}
 
 	e.mu.RLock()
 	for _, keyID := range keyIDs {
-		if key, ok := cache[keyID]; ok {
-			if key.State != core.StateActive {
-				continue
-			}
+		key, ok := cache[keyID]
+		switch {
+		case ok && key.State == core.StateActive:
 			foundKeys[keyID] = cloneKey(key.Key)
-		} else {
-			if e.origin != nil {
-				missedKeys = append(missedKeys, keyID)
-			}
+		case ok:
+			missing[keyID] = key.State
+		case e.origin != nil:
+			missedKeys = append(missedKeys, keyID)
+		default:
+			missing[keyID] = core.StateUnknown
 		}
 	}
 	e.mu.RUnlock()
 
 	if e.origin != nil && len(missedKeys) > 0 {
-		keys, err := e.origin.GetKeys(ctx, namespace, missedKeys)
+		keys, originMissing, err := e.origin.GetKeys(ctx, namespace, missedKeys)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		e.mu.Lock()
 		for keyID, k := range keys {
@@ -141,9 +147,20 @@ func (e *engine) GetKeys(ctx context.Context, namespace string, keyIDs []string)
 			foundKeys[keyID] = cloneKey(owned)
 		}
 		e.mu.Unlock()
+		for keyID, state := range originMissing {
+			missing[keyID] = state
+		}
+		// An origin that omits an ID reports nothing about it: treat it as unknown.
+		for _, keyID := range missedKeys {
+			if _, ok := foundKeys[keyID]; !ok {
+				if _, ok := missing[keyID]; !ok {
+					missing[keyID] = core.StateUnknown
+				}
+			}
+		}
 	}
 
-	return foundKeys, nil
+	return foundKeys, missing, nil
 }
 
 // GetOrCreateKeys implements core.KeyEngine
@@ -173,7 +190,7 @@ func (e *engine) GetOrCreateKeys(ctx context.Context, namespace string, keyIDs [
 		}()
 	}
 
-	keys, err := e.GetKeys(ctx, namespace, keyIDs)
+	keys, _, err := e.GetKeys(ctx, namespace, keyIDs)
 	if err != nil {
 		return nil, err
 	}

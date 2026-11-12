@@ -373,7 +373,7 @@ func TestProtector_Purge(t *testing.T) {
 		t.Fatal("expect err be nil, got", err)
 	}
 
-	keys, err := keyEng.GetKeys(ctx, nspace, []string{pf.UserID})
+	keys, _, err := keyEng.GetKeys(ctx, nspace, []string{pf.UserID})
 	if err != nil {
 		t.Fatal("expect err be nil, got", err)
 	}

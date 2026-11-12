@@ -32,13 +32,25 @@ func RunKeyEngineTest(t *testing.T, ctx context.Context, eng core.KeyEngine, opt
 		namespace = cfg.Namespace
 	}
 
-	keys, err := eng.GetKeys(ctx, namespace, nil)
+	keys, missing, err := eng.GetKeys(ctx, namespace, nil)
+	if err != nil {
+		t.Fatalf("expect err be nil, got: %v", err)
+	}
+	assertMissing(t, missing, core.KeyStates{})
+	if len(keys) != 0 {
+		t.Fatalf("expect keys map be empty, got: %v", keys)
+	}
+
+	// A key ID the engine has never seen is reported as unknown, not forgotten.
+	neverSeen := randomID()
+	keys, missing, err = eng.GetKeys(ctx, namespace, []string{neverSeen})
 	if err != nil {
 		t.Fatalf("expect err be nil, got: %v", err)
 	}
 	if len(keys) != 0 {
 		t.Fatalf("expect keys map be empty, got: %v", keys)
 	}
+	assertMissing(t, missing, core.KeyStates{neverSeen: core.StateUnknown})
 
 	keyIDs := []string{
 		randomID(),
@@ -71,10 +83,11 @@ func RunKeyEngineTest(t *testing.T, ctx context.Context, eng core.KeyEngine, opt
 
 	// Test get a sub set of keys
 	partial := keyIDs[1:]
-	keys, err = eng.GetKeys(ctx, namespace, partial)
+	keys, missing, err = eng.GetKeys(ctx, namespace, partial)
 	if err != nil {
 		t.Fatalf("expect err be nil, got: %v", err)
 	}
+	assertMissing(t, missing, core.KeyStates{})
 	if want, got := partial, keys.KeyIDs(); !keysEqual(want, got) {
 		t.Fatalf("expect %v, %v be equals", want, got)
 	}
@@ -88,10 +101,11 @@ func RunKeyEngineTest(t *testing.T, ctx context.Context, eng core.KeyEngine, opt
 		t.Fatalf("expect err be %v, got: %v", want, err)
 	}
 
-	keys, err = eng.GetKeys(ctx, namespace, keyIDs[0:1])
+	keys, missing, err = eng.GetKeys(ctx, namespace, keyIDs[0:1])
 	if err != nil {
 		t.Fatalf("expect err be nil, got: %v", err)
 	}
+	assertMissing(t, missing, core.KeyStates{keyIDs[0]: core.StateDisabled})
 	if want, got := empty, keys.KeyIDs(); !keysEqual(want, got) {
 		t.Fatalf("expect %v, %v be equals", want, got)
 	}
@@ -105,10 +119,11 @@ func RunKeyEngineTest(t *testing.T, ctx context.Context, eng core.KeyEngine, opt
 		t.Fatalf("expect err be %v, got: %v", want, err)
 	}
 
-	keys, err = eng.GetKeys(ctx, namespace, keyIDs[0:1])
+	keys, missing, err = eng.GetKeys(ctx, namespace, keyIDs[0:1])
 	if err != nil {
 		t.Fatalf("expect err be nil, got: %v", err)
 	}
+	assertMissing(t, missing, core.KeyStates{})
 	if want, got := keyIDs[:1], keys.KeyIDs(); !keysEqual(want, got) {
 		t.Fatalf("expect %v, %v be equals", want, got)
 	}
@@ -126,10 +141,11 @@ func RunKeyEngineTest(t *testing.T, ctx context.Context, eng core.KeyEngine, opt
 	if want, err := nilErr, eng.DeleteKey(ctx, namespace, keyIDs[0]); !errors.Is(err, want) {
 		t.Fatalf("expect err be %v, got: %v", want, err)
 	}
-	keys, err = eng.GetKeys(ctx, namespace, keyIDs[0:1])
+	keys, missing, err = eng.GetKeys(ctx, namespace, keyIDs[0:1])
 	if err != nil {
 		t.Fatalf("expect err be nil, got: %v", err)
 	}
+	assertMissing(t, missing, core.KeyStates{keyIDs[0]: core.StateDeleted})
 	if want, got := empty, keys.KeyIDs(); !keysEqual(want, got) {
 		t.Fatalf("expect %v, %v be equals", want, got)
 	}
@@ -168,6 +184,11 @@ func RunKeyEngineTest(t *testing.T, ctx context.Context, eng core.KeyEngine, opt
 		if want, err := core.ErrKeyNotFound, eng.ReEnableKey(ctx, namespace, keyIDs[1]); !errors.Is(err, want) {
 			t.Fatalf("expect err be %v, got: %v", want, err)
 		}
+		_, missing, err = eng.GetKeys(ctx, namespace, keyIDs[1:2])
+		if err != nil {
+			t.Fatalf("expect err be nil, got: %v", err)
+		}
+		assertMissing(t, missing, core.KeyStates{keyIDs[1]: core.StateDeleted})
 	}
 
 	// Test PurgeNamespace: create keys in two namespaces, purge one, assert
@@ -195,19 +216,21 @@ func RunKeyEngineTest(t *testing.T, ctx context.Context, eng core.KeyEngine, opt
 		t.Fatalf("expect err be %v, got: %v", want, err)
 	}
 
-	keys, err = eng.GetKeys(ctx, namespace, keyIDs)
+	keys, missing, err = eng.GetKeys(ctx, namespace, keyIDs)
 	if err != nil {
 		t.Fatalf("expect err be nil, got: %v", err)
 	}
+	assertMissing(t, missing, core.KeyStates{keyIDs[0]: core.StateUnknown, keyIDs[1]: core.StateUnknown, keyIDs[2]: core.StateUnknown})
 	if want, got := empty, keys.KeyIDs(); !keysEqual(want, got) {
 		t.Fatalf("expect %v, %v be equals", want, got)
 	}
 
 	// Sibling namespace untouched
-	keys, err = eng.GetKeys(ctx, otherNS, keyIDs)
+	keys, missing, err = eng.GetKeys(ctx, otherNS, keyIDs)
 	if err != nil {
 		t.Fatalf("expect err be nil, got: %v", err)
 	}
+	assertMissing(t, missing, core.KeyStates{})
 	if want, got := keyIDs, keys.KeyIDs(); !keysEqual(want, got) {
 		t.Fatalf("expect %v, %v be equals", want, got)
 	}
@@ -219,5 +242,18 @@ func RunKeyEngineTest(t *testing.T, ctx context.Context, eng core.KeyEngine, opt
 	}
 	if want, got := keyIDs[:1], keys.KeyIDs(); !keysEqual(want, got) {
 		t.Fatalf("expect %v, %v be equals", want, got)
+	}
+}
+
+// assertMissing checks the states GetKeys reports for IDs with no active key.
+func assertMissing(t *testing.T, got, want core.KeyStates) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("expect missing states %v, got %v", want, got)
+	}
+	for id, state := range want {
+		if got[id] != state {
+			t.Fatalf("expect state of %s be %s, got %s (all: %v)", id, state, got[id], got)
+		}
 	}
 }

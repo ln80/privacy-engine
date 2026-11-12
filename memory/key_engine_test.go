@@ -45,7 +45,7 @@ func TestKeyCopiesStayIntactWhenCacheIsCleared(t *testing.T) {
 	held := created[keyID]
 	heldSnap := bytes.Clone(held)
 
-	originKeys, err := origin.GetKeys(ctx, namespace, []string{keyID})
+	originKeys, _, err := origin.GetKeys(ctx, namespace, []string{keyID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestKeyCopiesStayIntactWhenCacheIsCleared(t *testing.T) {
 	if !bytes.Equal(held, heldSnap) {
 		t.Fatal("ClearCache rewrote a key the caller still holds")
 	}
-	originAfter, err := origin.GetKeys(ctx, namespace, []string{keyID})
+	originAfter, _, err := origin.GetKeys(ctx, namespace, []string{keyID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestKeyCopiesStayIntactWhenCacheIsCleared(t *testing.T) {
 	}
 
 	held[0] ^= 0xff
-	reloaded, err := wrapper.GetKeys(ctx, namespace, []string{keyID})
+	reloaded, _, err := wrapper.GetKeys(ctx, namespace, []string{keyID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestConcurrentClearDoesNotRaceWithHeldKey(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			if _, err := wrapper.GetKeys(ctx, namespace, []string{keyID}); err != nil {
+			if _, _, err := wrapper.GetKeys(ctx, namespace, []string{keyID}); err != nil {
 				t.Error(err)
 				return
 			}
@@ -152,11 +152,51 @@ func TestConcurrentClearDoesNotRaceWithHeldKey(t *testing.T) {
 	if !bytes.Equal(held, snap) {
 		t.Fatal("held key changed while the cache was cleared")
 	}
-	originKeys, err := origin.GetKeys(ctx, namespace, []string{keyID})
+	originKeys, _, err := origin.GetKeys(ctx, namespace, []string{keyID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(originKeys[keyID], snap) {
 		t.Fatal("origin key changed while the cache was cleared")
+	}
+}
+
+// A cache that has never seen a key reports the origin's state for it, so a
+// subject forgotten by another instance reads as disabled, not unknown.
+func TestCacheWrapperReportsOriginStates(t *testing.T) {
+	ctx := context.Background()
+	const namespace = "tenant-states"
+
+	origin := NewKeyEngine()
+	if _, err := origin.GetOrCreateKeys(ctx, namespace, []string{"active", "disabled", "deleted"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := origin.DisableKey(ctx, namespace, "disabled"); err != nil {
+		t.Fatal(err)
+	}
+	if err := origin.DeleteKey(ctx, namespace, "deleted"); err != nil {
+		t.Fatal(err)
+	}
+
+	wrapper := NewCacheWrapper(origin, time.Minute)
+	keys, missing, err := wrapper.GetKeys(ctx, namespace, []string{"active", "disabled", "deleted", "never"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := keys["active"]; !ok || len(keys) != 1 {
+		t.Fatalf("expect only the active key, got %v", keys.KeyIDs())
+	}
+	want := core.KeyStates{
+		"disabled": core.StateDisabled,
+		"deleted":  core.StateDeleted,
+		"never":    core.StateUnknown,
+	}
+	if len(missing) != len(want) {
+		t.Fatalf("expect %v, got %v", want, missing)
+	}
+	for id, state := range want {
+		if missing[id] != state {
+			t.Fatalf("%s: expect %s, got %s", id, state, missing[id])
+		}
 	}
 }

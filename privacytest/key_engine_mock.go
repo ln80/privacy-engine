@@ -12,6 +12,10 @@ type KeyEngineMock struct {
 	NamespaceList []string
 	KeyList       core.KeyMap
 
+	// KeyStates sets the state GetKeys reports for requested IDs missing from
+	// KeyList. IDs in neither map are reported as core.StateUnknown.
+	KeyStates core.KeyStates
+
 	ListNamespaceErr error
 	GetKeyErr        error
 	CreateKeyErr     error
@@ -57,15 +61,26 @@ func (e *KeyEngineMock) DisableKey(ctx context.Context, namespace string, keyID 
 }
 
 // GetKeys implements dynamodb.KeyEngine
-func (e *KeyEngineMock) GetKeys(ctx context.Context, namespace string, keyIDs []string) (keys core.KeyMap, err error) {
+func (e *KeyEngineMock) GetKeys(ctx context.Context, namespace string, keyIDs []string) (keys core.KeyMap, missing core.KeyStates, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	if err := e.GetKeyErr; err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	return cloneKeyMap(e.KeyList), nil
+	missing = core.KeyStates{}
+	for _, id := range keyIDs {
+		if _, ok := e.KeyList[id]; ok {
+			continue
+		}
+		state, ok := e.KeyStates[id]
+		if !ok {
+			state = core.StateUnknown
+		}
+		missing[id] = state
+	}
+	return cloneKeyMap(e.KeyList), missing, nil
 }
 
 // GetOrCreateKeys implements dynamodb.KeyEngine
