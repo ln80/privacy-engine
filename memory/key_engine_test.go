@@ -3,6 +3,7 @@ package memory
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -198,5 +199,78 @@ func TestCacheWrapperReportsOriginStates(t *testing.T) {
 		if missing[id] != state {
 			t.Fatalf("%s: expect %s, got %s", id, state, missing[id])
 		}
+	}
+}
+
+// PE-04 regression: once the origin succeeds, the cache wrapper reports
+// success whether or not it holds the key, and never serves a stale state.
+func TestCacheWrapperDisableReEnableFollowOrigin(t *testing.T) {
+	ctx := context.Background()
+	const namespace, keyID = "tenant-pe04", "u1"
+
+	origin := NewKeyEngine()
+	wrapper := NewCacheWrapper(origin, time.Minute).(core.KeyEngineCache)
+
+	created, err := wrapper.GetOrCreateKeys(ctx, namespace, []string{keyID}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := bytes.Clone(created[keyID])
+
+	stateOf := func(eng core.KeyEngine) core.KeyState {
+		t.Helper()
+		keys, missing, err := eng.GetKeys(ctx, namespace, []string{keyID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := keys[keyID]; ok {
+			return core.StateActive
+		}
+		return missing[keyID]
+	}
+
+	// Evicted, then forgotten: success, and the origin is disabled.
+	if err := wrapper.ClearCache(ctx, namespace, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := wrapper.DisableKey(ctx, namespace, keyID); err != nil {
+		t.Fatalf("DisableKey after eviction: %v", err)
+	}
+	if got := stateOf(origin); got != core.StateDisabled {
+		t.Fatalf("origin state %s, want DISABLED", got)
+	}
+	if got := stateOf(wrapper); got != core.StateDisabled {
+		t.Fatalf("wrapper state %s, want DISABLED", got)
+	}
+
+	// Evicted, then recovered: success, and the same key comes back.
+	if err := wrapper.ClearCache(ctx, namespace, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := wrapper.ReEnableKey(ctx, namespace, keyID); err != nil {
+		t.Fatalf("ReEnableKey after eviction: %v", err)
+	}
+	keys, _, err := wrapper.GetKeys(ctx, namespace, []string{keyID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(keys[keyID], original) {
+		t.Fatal("recovered key differs from the original")
+	}
+
+	// Disabled while cached: the wrapper stops holding the key at once.
+	if err := wrapper.DisableKey(ctx, namespace, keyID); err != nil {
+		t.Fatal(err)
+	}
+	if got := stateOf(wrapper); got != core.StateDisabled {
+		t.Fatalf("wrapper state %s, want DISABLED", got)
+	}
+
+	// Origin errors still come through.
+	if err := origin.DeleteKey(ctx, namespace, keyID); err != nil {
+		t.Fatal(err)
+	}
+	if err := wrapper.ReEnableKey(ctx, namespace, keyID); !errors.Is(err, core.ErrKeyNotFound) {
+		t.Fatalf("ReEnableKey of a deleted key: expect ErrKeyNotFound, got %v", err)
 	}
 }

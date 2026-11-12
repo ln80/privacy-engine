@@ -44,7 +44,8 @@ The single place to see where the audit work stands, across the three repos. Det
 | Wire format v2, step 4: new field format, no regex, v1 removed | PE-23 | Done |
 | Wire format v2, step 5: idempotency by authentication, Decrypt state table, `ForgottenValue` | PE-05, PE-10 | Done |
 | Wire format v2, step 6: format spec, pseudonymous-subject rule, statuses | PE-06 | Done |
-| Remaining hotfixes | PE-04, PE-07, PE-09, PE-15, PE-16 | Next |
+| Forget/Recover no longer fail after cache eviction | PE-04 | Done |
+| Remaining hotfixes | PE-07, PE-09, PE-15, PE-16 | Next |
 | Then, before the external audit | tests (section 3), API cleanup (section 2), hygiene and security docs (sections 5–6), caches PE-20/21, PE-12, PE-14 | |
 
 Vault findings PE-25 to PE-30 move to elastic as PX-18 to PX-23.
