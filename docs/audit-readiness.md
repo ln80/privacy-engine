@@ -44,12 +44,12 @@ Scanners are clean: govulncheck reports 0 reachable vulnerabilities, gosec and s
 | PE-03 | High | Crypto | Short ciphertext panics `Decrypt` | Fixed |
 | PE-04 | High | Keys | `Forget`/`Recover` report failure after cache expiry although they succeeded | Open |
 | PE-05 | High | Crypto | Values that look encrypted are never encrypted | Fixed |
-| PE-06 | High | Privacy | Subject ID is stored in clear in every ciphertext | Open |
+| PE-06 | High | Privacy | Subject ID is stored in clear in every ciphertext | Accepted: documented rule |
 | PE-07 | High | Factory | Clear func panics after eviction (data race) | Open |
 | PE-08 | High | Crypto | Key length not enforced (AES-128 silently accepted) | Fixed |
 | PE-09 | High | Leakage | Keys and PII leak through `%#v`, `encoding/json` and `log/slog` | Open |
 | PE-10 | High | Integrity | Decrypting with the wrong namespace silently wipes PII | Fixed |
-| PE-11 | Medium | Crypto | Field swap not detected (AAD binds namespace only) | Open |
+| PE-11 | Medium | Crypto | Field swap not detected (AAD binds namespace only) | Accepted risk (narrowed) |
 | PE-12 | Medium | API | Encrypt/Decrypt are not atomic over a batch | Open |
 | PE-13 | Medium | Keys | Erasure latency across instances is undocumented | Open |
 | PE-14 | Medium | Keys | `DeriveSubjectKey` output escapes crypto-shredding | Open |
@@ -62,7 +62,7 @@ Scanners are clean: govulncheck reports 0 reachable vulnerabilities, gosec and s
 | PE-21 | Medium | Cache | Caches are unbounded | Open |
 | PE-22 | Medium | Build | Uncommitted `go.sum` incomplete; local tests depend on `go.work` | Fixed |
 | PE-23 | Medium | Keys | No key versioning, so no rotation and no crypto agility | Fixed (format; rotation itself not built) |
-| PE-24 | Low | various | See "Low" list | Open |
+| PE-24 | Low | various | See "Low" list | Partly fixed |
 | PE-25 | High | Vault | Token vault stores PII in plaintext in three attributes, one of them an index key (elastic) | Open |
 | PE-26 | High | Vault | Vault, DEKs and their access policy share one table and one IAM policy (elastic) | Open |
 | PE-27 | High | Vault | Token collision returns a token that maps to someone else (elastic) | Open |
@@ -85,7 +85,7 @@ Scanners are clean: govulncheck reports 0 reachable vulnerabilities, gosec and s
 #### PE-02 Stream truncation is not detected. Fixed.
 The end-of-stream marker (`aes/256_gcm.go:156`, check at `:216`) is four unauthenticated zero bytes. Anyone can drop all chunks after a boundary and append `00 00 00 00`; `DecryptStream` returns the shorter plaintext with `err == nil`. PoC: a 20-byte stream cut to header + marker decrypts to an empty body without error. The header (version, base nonce) is also outside the AAD.
 - Fix: STREAM construction (as in Tink and age): a "final chunk" flag in each chunk's nonce or AAD, header bound into the AAD, EOF before the final chunk is an error. New stream format version.
-- Done (stream format v2, `aes/stream.go`; v1 is no longer readable, by decision: no deployed data to keep). Header `version | alg | segment size | salt | nonce prefix`. Per-stream key `HKDF-SHA256(DEK, salt, "privacy-engine/stream/v2" | len16(namespace) | namespace)`, so field and stream encryption no longer share a key and the namespace is length-prefixed (two PE-24 items). Segment nonce `prefix | index | final flag`; the header is every segment's AAD. Segments are filled with `io.ReadFull`, so boundaries no longer depend on the source reader (PE-24). Regression tests in `aes/stream_test.go`: every truncation offset, the v1 marker forgery, drop/swap/duplicate/append, every single-bit flip, wrong key and namespace, bad headers; `FuzzDecryptStream` checks that any change to a valid stream fails.
+- Done (stream format v2, `aes/stream.go`; v1 is no longer readable, by decision: no deployed data to keep). Header `version | alg | key version | segment size | salt | nonce prefix` (key version added in the PE-23 work; full layout in `wire-format-v2.md` section 5). Per-stream key `HKDF-SHA256(DEK, salt, "privacy-engine/stream/v2" | len16(namespace) | namespace)`, so field and stream encryption no longer share a key and the namespace is length-prefixed (two PE-24 items). Segment nonce `prefix | index | final flag`; the header is every segment's AAD. Segments are filled with `io.ReadFull`, so boundaries no longer depend on the source reader (PE-24). Regression tests in `aes/stream_test.go`: every truncation offset, the v1 marker forgery, drop/swap/duplicate/append, every single-bit flip, wrong key and namespace, bad headers; `FuzzDecryptStream` checks that any change to a valid stream fails.
 
 ### High
 
@@ -101,9 +101,10 @@ The idempotency check `protector.go:219` skips any value matching `ENC.<v>.<b64>
 - Fix: do not infer "already encrypted" from the value alone. Either require the value to authenticate under the struct's subject key before skipping, or track state outside the value; never trust the embedded subject ID over the struct's `subjectID` field.
 - Done: `Encrypt` keeps a value in wire format only if it authenticates under its own subject's active key, or if that subject is forgotten (a shredded value). Any other look-alike fails with `ErrValueNotAuthentic`; a value naming an unknown subject fails with `ErrKeyUnknown`. The embedded subject ID is kept and trusted only through authentication (decision in `wire-format-v2.md` section 3). Regression: `key_state_test.go`.
 
-#### PE-06 Subject ID in clear in every ciphertext. Confirmed.
+#### PE-06 Subject ID in clear in every ciphertext. Accepted, with a documented rule.
 `wire_format.go:48` base64-encodes the subject ID into the value (PoC: `ENC..dTE=.` is `u1`). Subject IDs are often emails or account IDs, so every "encrypted" record still says whose it is, keeps saying so after crypto-shredding, and enables linkage across datasets. This conflicts with data minimisation and will be a headline item for a privacy-focused auditor.
 - Fix (format v2): store an opaque key reference instead, e.g. a random key ID kept by the KeyEngine, or `HMAC(namespace secret, subjectID)`.
+- Resolution: not applied, after review. The subject stays in the value because it makes values self-describing (they decrypt into any type, copies keep following their owner's key and are shredded with it, rotation and audit jobs need no domain types), while the record already stores the same subject in clear in its `subjectID` field. An opaque reference would hide nothing the record does not show. The real risk, a direct identifier used as subject, is closed by a rule in the README, the package godoc and `wire-format-v2.md` section 6: subject IDs must be pseudonymous (random IDs or tokenizer tokens). The rationale is recorded for the auditor in `wire-format-v2.md` sections 6 and 8.
 
 #### PE-07 Factory clear func panics after eviction. Confirmed.
 `factory.go:96` reads `f.reg[namespace]` without the lock and dereferences it. After `Monitor` evicts the entry, the documented `defer clear()` panics with a nil-pointer dereference. It is also a data race on the map.
@@ -125,7 +126,7 @@ The idempotency check `protector.go:219` skips any value matching `ENC.<v>.<b64>
 
 ### Medium
 
-- **PE-11 Field swap not detected.** AAD is only `ns:<namespace>` (`aes/util.go`). Ciphertexts can be moved between fields or records of the same subject without detection. Bind subject and field path into the AAD in format v2.
+- **PE-11 Field swap not detected. Accepted risk (narrowed).** AAD was only `ns:<namespace>` (`aes/util.go`). Ciphertexts can be moved between fields or records of the same subject without detection. Bind subject and field path into the AAD in format v2. Resolution: the AAD now binds namespace, algorithm and key version, and per-subject keys already reject moves across subjects; only a swap between two values of the same subject and namespace remains. Binding Go field paths was rejected because a refactor would make old data unreadable (a real hazard for event-sourced callers). A stable `bind=<name>` tag option can come later as a new algorithm ID. See `wire-format-v2.md` section 7.
 - **PE-12 Batch Encrypt/Decrypt not atomic.** If struct #3 fails, structs #1-2 are already mutated; on `Encrypt` that leaves a batch half plaintext. Encrypt into copies, commit on success.
 - **PE-13 Erasure latency.** Other processes keep serving a forgotten subject's cached key until their TTL. Acceptable, but must be documented as a bounded erasure delay, with the TTL as the bound.
 - **PE-14 `DeriveSubjectKey` escapes crypto-shredding.** If callers persist the derived key, `Forget` no longer erases data encrypted with it. Document clearly; consider an API that never returns raw derived bytes.
@@ -141,14 +142,14 @@ The idempotency check `protector.go:219` skips any value matching `ENC.<v>.<b64>
 
 ### Low (PE-24)
 
-- AES-GCM with random 96-bit nonces is fine per subject; document the ~2^32 messages-per-key bound. Field and stream encryption share one DEK; derive separate subkeys.
-- AAD `ns + "|chunk:" + n` is ambiguous if a namespace contains `|chunk:`; use length-prefixed encoding.
+- AES-GCM with random 96-bit nonces is fine per subject; document the ~2^32 messages-per-key bound. Field and stream encryption share one DEK; derive separate subkeys. **Done:** bound documented (`wire-format-v2.md` section 3); streams use a per-stream HKDF key.
+- AAD `ns + "|chunk:" + n` is ambiguous if a namespace contains `|chunk:`; use length-prefixed encoding. **Done:** field AAD and stream key derivation length-prefix the namespace.
 - Cache TTL is compared in whole Unix seconds, so a TTL under 1 s behaves as 0 (tests use `CacheTTL = 1`, i.e. 1 ns).
 - Decrypted PII and `TokenData` are Go `string`s and cannot be wiped (see section 4).
 - `NewProtector("")` silently uses the shared namespace `"default"`; in multi-tenant code an error is safer.
 - `Clear` tags the namespace as the subject in its error (`protector.go:487`).
 - `Monitor` never stops its ticker and can be started twice.
-- Stream chunk size depends on the source reader's `Read` behaviour; use `io.ReadFull` for deterministic chunks.
+- Stream chunk size depends on the source reader's `Read` behaviour; use `io.ReadFull` for deterministic chunks. **Done** in stream format v2.
 
 ---
 
@@ -239,7 +240,7 @@ Go gives memory safety (no reading past a buffer), not secret-memory protection:
 | LICENSE file | **Missing** (README says MIT). Blocker for publishing |
 | SECURITY.md (disclosure contact, supported versions, response times) | Missing |
 | Threat model / security design | Missing: assets, attackers, trust boundaries (KeyEngine, storage, process memory), what crypto-shredding does and does not guarantee, erasure latency |
-| Wire and stream format spec | Missing: byte-level spec with versioning rules |
+| Wire and stream format spec | **Done:** `docs/wire-format-v2.md` (byte layouts, AAD, key states, behaviour, accepted risks) |
 | CONTRIBUTING, CODE_OF_CONDUCT, CODEOWNERS | Missing |
 | CHANGELOG and semver/compat policy | Missing; interface additions are breaking for backends |
 | CI supply chain | Actions pinned by tag, not SHA; `securego/gosec@master` unpinned; no `permissions:` block; no govulncheck, fuzz job, Dependabot/Renovate or OpenSSF Scorecard; CI uses the module without `go.work` (good) but local dev doesn't (PE-22) |
@@ -253,11 +254,11 @@ Go gives memory safety (no reading past a buffer), not secret-memory protection:
 Small, separate PRs, in this order. Steps 1-3 are what an auditor would block on.
 
 1. **Hotfixes, no format change:** PE-01, 03, 04, 07, 08, 09, 10, 15, 16, 19, 22, each with a regression test. Detailed in section 8.
-2. **Format v2 (one breaking change):** STREAM construction (PE-02), opaque key reference instead of subject ID (PE-06), key version + algorithm ID (PE-23), AAD bound to subject and field (PE-11), length-prefixed AAD, safe idempotency (PE-05). v1 stays decrypt-only for migration.
+2. **Format v2 (one breaking change). Done** on `fix/audit-hardening`, see `wire-format-v2.md`: STREAM construction (PE-02), key version + algorithm ID (PE-23), length-prefixed AAD, safe idempotency (PE-05), key states (PE-10). Changed after review: the subject ID stays (PE-06 becomes a rule), field binding is an accepted risk (PE-11), and v1 is not kept at all (no deployed data).
 3. **Tests:** `aes` unit, known-answer and tamper tests; fuzz targets; cache-wrapper and concurrency cases in `privacytest`; coverage gate in CI.
 4. **API cleanup (before v1.0, while breaking is cheap):** return `*Protector`, split store vs cache, named options, consistent errors and naming (section 2).
 5. **Hygiene:** LICENSE, SECURITY.md, CONTRIBUTING, CODEOWNERS, CHANGELOG, pinned actions, `permissions:`, govulncheck, Scorecard, Dependabot, move `litter` out.
-6. **Security docs:** threat model, key lifecycle mapped to OWASP, wire format spec, memory-protection statement.
+6. **Security docs:** threat model, key lifecycle mapped to OWASP, memory-protection statement (wire format spec done).
 7. **Token vault redesign (privacy-engine.elastic, with the core contract changes it needs):** PE-25 to PE-30, following section 7.3.
 8. **Later:** atomic batches (PE-12), audit hooks, paginated `ListTokens`, bounded caches, optional `runtime/secret` and memguard builds.
 
@@ -427,7 +428,7 @@ A missing subject is no longer reported as a bad tag. `Scan(..., true)` on a str
 
 `Encrypt` prefetches keys from `piiStruct.SubjectID()` only (`protector.go`). `FieldReplace.SubjectID` is now the subject of the struct that owns the field. The parent subject is used only when the element has none. A nested element with its own subject is not in `keys`, so the callback returns `ErrSubjectForgotten`. `Replace` writes nothing unless every callback succeeds, so the record is left unchanged rather than half-encrypted, and it is not encrypted either. Before `Replace`, collect every `fr.SubjectID` (a `Plan` with a callback that records subjects, or a first pass) and prefetch those keys. `SubjectID()` is the value `Scan` observed. Changing the struct afterwards does not change it. `Decrypt` already takes the subject from the wire value, not from `SubjectID()`.
 
-`FieldReplace.Path` is available for PE-11. `Name` is still the bare field name. `Path` looks like `Email`, `Members[0].Email`, or `Labels[0].Street`. A map element uses a stable index after sorting keys. The map key is not part of the path, because the key can be personal data. AAD still binds the namespace only. Use `Path` when format v2 is designed.
+`FieldReplace.Path` is available for PE-11. `Name` is still the bare field name. `Path` looks like `Email`, `Members[0].Email`, or `Labels[0].Street`. A map element uses a stable index after sorting keys. The map key is not part of the path, because the key can be personal data. Format v2 decided not to bind the path (PE-11 accepted risk).
 
 One struct is all-or-nothing. The `Encrypt` and `Decrypt` loops still commit struct 0 before struct 1 fails, so PE-12 is still open for a batch.
 

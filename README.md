@@ -73,6 +73,13 @@ Fields are tagged using `pii`, `sensitive`, or `sens` (interchangeable):
 | `data,replace=X` | Replacement value when the subject is forgotten | `pii:"data,replace=deleted"` |
 | `dive` | Recurse into nested structs | `pii:"dive"` |
 
+> **Subject IDs must be pseudonymous.** Use a random ID or a token from the
+> tokenizer, never an email, a name or another direct identifier. Every
+> encrypted value names its subject in clear (see [Wire Format](#wire-format)),
+> just as the record's own `subjectID` field does. To key data on an email,
+> tokenize the email first and use the token as the subject, as in the example
+> below.
+
 ### One subject or several per record
 
 By default `Encrypt` requires each record to use one subject, so forgetting that subject erases all of the record's personal data. A record whose data belongs to several subjects (for example an embedded author with its own `subjectID`) fails with struct-sensitive's `ErrMultipleSubjectID`. To allow it, encrypting each field under the nearest declared subject:
