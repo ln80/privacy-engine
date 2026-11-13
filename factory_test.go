@@ -28,25 +28,34 @@ func (tp *spyProtector) Clear(ctx context.Context, force bool) error {
 	return tp.Protector.Clear(ctx, force)
 }
 
-func TestFactory(t *testing.T) {
+// eventually polls cond until it holds or within elapses. Timing tests wait
+// for the state they assert instead of sleeping a fixed time, which failed
+// under load when the monitor's ticker fired late.
+func eventually(t *testing.T, within time.Duration, cond func() bool, format string, args ...any) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf(format, args...)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
 
-	assertProtectorCount := func(t *testing.T, f *factory, count int) {
+func TestFactory(t *testing.T) {
+	protectorCount := func(f *factory) int {
 		f.mu.Lock()
 		defer f.mu.Unlock()
-
-		if want, got := count, len(f.reg); want != got {
-			t.Fatalf("expect Protectors count be %d, got %d", want, got)
-		}
+		return len(f.reg)
 	}
-
-	assertCalls := func(t *testing.T, spy *spyProtector, min int) {
+	clearCalls := func(spy *spyProtector) int {
 		spy.mu.Lock()
 		defer spy.mu.Unlock()
-
-		spy.Calls.AssertCount(t, "Clear", min)
+		return len(spy.Calls["Clear"])
 	}
 
 	ctx, cancelCtx := context.WithCancel(context.Background())
+	defer cancelCtx()
 
 	builder := func(namespace string) Protector {
 		return &spyProtector{
@@ -61,59 +70,49 @@ func TestFactory(t *testing.T) {
 	// setup Factory and overwrite default durations with short values
 	idle := 500 * time.Millisecond
 	period := 100 * time.Millisecond
-	margin := 10 * time.Millisecond
+	within := 5 * time.Second // generous: only a broken monitor reaches it
 	f := NewFactory(builder, func(fc *FactoryConfig) {
 		fc.IDLE = idle
 		fc.MonitorPeriod = period
 	})
+	fi := f.(*factory)
 
 	// init two Protectors & assert registry count
 	p1, _ := f.Instance("namespace_1")
 	_, _ = f.Instance("namespace_1")
 	p2, _ := f.Instance("namespace_2")
-
-	assertProtectorCount(t, f.(*factory), 2)
+	if got := protectorCount(fi); got != 2 {
+		t.Fatalf("expect Protectors count be 2, got %d", got)
+	}
 
 	// start monitoring
 	f.Monitor(ctx)
 
-	// wait and spy Protectors' calls execs
-	time.Sleep(margin)
-	time.Sleep(period)
-
-	assertCalls(t, p1.(*spyProtector), 1)
-	assertCalls(t, p2.(*spyProtector), 1)
-
-	// assert Monitor periodically clears resources
-	time.Sleep(period)
-
-	assertCalls(t, p1.(*spyProtector), 2)
-	assertCalls(t, p2.(*spyProtector), 2)
-
-	// assert sure Factory already deleted inactive Protectors from registry
-	time.Sleep(idle)
-	time.Sleep(margin)
-
-	assertProtectorCount(t, f.(*factory), 0)
-
-	// init a new Protector and force context cancellation
-	p3, _ := f.Instance("namespace_2")
-
-	if want, got := 1, len(f.(*factory).reg); want != got {
-		t.Fatalf("expect %d, %d be equals", want, got)
+	// Monitor clears every Protector, then keeps clearing them periodically.
+	for _, n := range []int{1, 2} {
+		for _, p := range []Protector{p1, p2} {
+			eventually(t, within, func() bool { return clearCalls(p.(*spyProtector)) >= n },
+				"expect Clear called at least %d times", n)
+		}
 	}
 
-	time.Sleep(margin)
-	time.Sleep(period)
+	// Inactive Protectors are removed from the registry once idle.
+	eventually(t, within, func() bool { return protectorCount(fi) == 0 },
+		"expect idle Protectors removed from the registry")
 
-	assertCalls(t, p3.(*spyProtector), 1)
+	// init a new Protector, then cancel the context.
+	p3, _ := f.Instance("namespace_2")
+	if got := protectorCount(fi); got != 1 {
+		t.Fatalf("expect Protectors count be 1, got %d", got)
+	}
+	eventually(t, within, func() bool { return clearCalls(p3.(*spyProtector)) >= 1 },
+		"expect the new Protector cleared")
 
 	cancelCtx()
 
-	time.Sleep(margin)
-
-	// assert Protector was deleted from registry even is not IDLE
-	assertProtectorCount(t, f.(*factory), 0)
+	// The Protector is removed on shutdown even though it is not idle.
+	eventually(t, within, func() bool { return protectorCount(fi) == 0 },
+		"expect Protectors removed from the registry on shutdown")
 }
 
 // PE-07 regression: the clear func returned by Instance works after Monitor
