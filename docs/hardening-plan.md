@@ -30,6 +30,8 @@ The single place to see where the audit work stands, across the three repos. Det
 | – | After `PurgeNamespace`, keys report `Unknown`, so decrypting a purged tenant's data is an error, not a placeholder |
 | E1–E5 | elastic: Forget of an unknown subject is `ErrKeyNotFound`; default KMS context `{v, ns, sid}`, pluggable; tombstones kept; v0.7.0 numbering; `dynamodb` and `kms` stay independent (see elastic `docs/hardening-plan.md`) |
 | V1–V12 | Token vault v2, revision 2 (elastic `docs/token-vault-v2.md`): one table, one `@vault` key with derived keys, KMS optional, a new token after Forget, forgotten tokens listed by state, `@` reserved |
+| E6 | Erasure after the grace period by DynamoDB TTL instead of a janitor: the secret of a forgotten subject moves to its own item with `_ttl`, reads enforce the deadline, the janitor is optional (elastic v0.9.0) |
+| D3-a | `Forget(id, Immediately())` forces immediate erasure for one call (v0.9.0); doconvoy uses it for account purge only |
 
 ## Phase 1: privacy-engine (`fix/audit-hardening`)
 
@@ -61,6 +63,8 @@ Vault findings PE-25 to PE-30 move to elastic as PX-18 to PX-23.
 
 ## Phase 2: privacy-engine.elastic
 
+**Done, released as elastic v0.9.0** (no v0.8.0), on privacy-engine v0.9.0. Status per step is in elastic `docs/hardening-plan.md`; only step 12 (SAM reference stack) remains.
+
 Requires a privacy-engine release with phase 1 (new `GetKeys` signature, Purge API).
 
 1. **Build:** require the new privacy-engine, re-enable CI (PX-16).
@@ -84,16 +88,21 @@ Requires a privacy-engine release with phase 1 (new `GetKeys` signature, Purge A
 
 ## Phase 3: doconvoy (KMS envelope integration)
 
-Today doconvoy wires `dynamodb.NewKeyEngine` **without** the KMS wrapper (plaintext DEKs in the table) and leaves `GracefulMode` at its default with no janitor, while `posture.md` claims immediate crypto-shredding.
+**Done** on doconvoy branch `feat/e2eev2` (2026-11-13), against privacy-engine and elastic v0.9.0. Before it, doconvoy wired `dynamodb.NewKeyEngine` without the KMS wrapper (plaintext DEKs in the table), left `GracefulMode` at its default with nothing completing erasure, and `posture.md` claimed immediate crypto-shredding.
 
-1. **CDK:**
-   - One CMK (D2): rotation on, RETAIN in prod.
-   - Runtime Lambdas get `kms:GenerateDataKey` and `kms:Decrypt`, conditioned on encryption-context keys.
-   - Purge and scheduler roles get no KMS access.
-2. **Wiring:** use the safe elastic constructor (KMS required). Keep the cache off at first; parallel KMS decrypts with a bound.
-3. **Forget:** graceful by default plus the janitor schedule, or forced immediate where the product promises it (D3). Correct `posture.md` to match.
-4. **Fresh deploy:** no migration of plaintext DEKs, since the data is reset.
-5. **Integration checks:**
-   - Stream consumers treat output as valid only at `io.EOF` (attachments).
-   - No ciphertext is copied between structs with different subjects.
-   - Update the one test asserting the `ENC.` prefix shape.
+| Step | Outcome | doconvoy commits |
+|---|---|---|
+| Compile against v0.8.0+ | Only break: `GetKeys` in the identity purge test. Decrypting a purged tenant is now `ErrKeyUnknown` (test updated) | `1f3f898c`, `114ecada` |
+| Wiring | KMS over DynamoDB, token engine on the same table, required (no path back to clear keys). **Changed:** protector cache **on**, TTL 30 s, since PE-04 made it safe for Forget. `ForgottenValue` left `""` | `8cbafdc3` |
+| CDK: CMK and grants | One CMK per environment, rotation on, RETAIN in prod. `kms:GenerateDataKey` and `kms:Decrypt` conditioned on context keys exactly `v`, `ns`, `sid` and `v = "1"`. **Changed:** the scheduler gets KMS too (reminders decrypt, `PurgeUser` forgets); cron and export-lifecycle get none | `fae1d6e8` |
+| Forget and erasure | Graceful by default, one grace period (7 days) on both engines. **Changed:** a janitor was built, then replaced by TTL (E6), as the privacy table already has TTL on `_ttl`. Immediate only for account purge (`Immediately()`) | `c7e6da0b`, `6ce54727`, `5e83550d`, `241d233c`, `0df0647b` |
+| Fresh deploy | No migration: the privacy table is reset | – |
+| Integration checks | Streams valid only at `io.EOF`: downloads now abort instead of truncating. "Anonymous" fallbacks correct for omitted tokens, now tested for graceful Forget. Subject list shows `State`. The `ENC.` prefix test already matched v2. Subject IDs never start with `@`. e2eev2 items (`e2eev2.*` partitions) cannot collide with engine items | `c9b25551`, `9276a9b2`, `50ddb485` |
+| Found during review | Session cookies were signed only and carried derived attachment keys: now encrypted. Those keys had no time limit: now 15 minutes. The worker retried events of purged tenants forever: now dropped and logged | `6b948ea3`, `55301d1c`, `808ba385` |
+| `posture.md` | Erasure timeline, KMS, vault, cookies, attachment keys; remaining gaps listed | `b8bc655c` |
+
+**Open:**
+- Least-privilege privacy-table actions per role (deferred; roles still get read/write on the table).
+- A CMK key policy restricted to the runtime roles (default IAM-delegated policy today).
+- Pin released library versions in doconvoy and bundle Lambdas with `GOWORK=off`, after event-store is released with struct-sensitive v0.8.0 support.
+- S3 objects of deleted secrets are kept until tenant purge (unreadable once the secret's key is erased).
