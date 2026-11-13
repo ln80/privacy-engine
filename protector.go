@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/ln80/privacy-engine/aes"
@@ -37,7 +38,27 @@ var (
 	// does not authenticate under its subject's active key: tampered, forged,
 	// or encrypted elsewhere. Encrypt refuses to keep or re-encrypt it.
 	ErrValueNotAuthentic = newErr("value looks encrypted but does not authenticate")
+
+	// ErrReservedSubjectID means a subject ID starts with "@". Those IDs name
+	// the library's own keys (the vault key is "@vault") and cannot be used to
+	// encrypt, forget, recover or derive.
+	ErrReservedSubjectID = newErr("subject IDs starting with @ are reserved")
 )
+
+// reservedIDPrefix marks IDs that belong to the library, such as vaultKeyID.
+const reservedIDPrefix = "@"
+
+func isReservedID(id string) bool {
+	return strings.HasPrefix(id, reservedIDPrefix)
+}
+
+// checkSubjectID refuses a reserved subject ID.
+func checkSubjectID(id string) error {
+	if isReservedID(id) {
+		return ErrReservedSubjectID
+	}
+	return nil
+}
 
 // Protector presents the service's interface that encrypts, decrypts,
 // and crypto-erases subjects' Personal data.
@@ -248,6 +269,11 @@ func (p *protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) 
 
 	slices.Sort(subjectIDs)
 	subjectIDs = slices.Compact(subjectIDs)
+	for _, id := range subjectIDs {
+		if err = checkSubjectID(id); err != nil {
+			return err
+		}
+	}
 
 	// Values already in wire format may name other subjects (a copied value);
 	// their keys are needed to authenticate them.
@@ -378,6 +404,9 @@ func (p *protector) EncryptStream(ctx context.Context, subID string, r io.Reader
 	if subID == "" {
 		return nil, errors.New("empty subject id")
 	}
+	if err = checkSubjectID(subID); err != nil {
+		return nil, err
+	}
 
 	keys, err := p.KeyEngine.GetOrCreateKeys(ctx, p.namespace, []string{subID}, p.Encryptor.KeyGen())
 	if err != nil {
@@ -405,6 +434,9 @@ func (p *protector) DecryptStream(ctx context.Context, subID string, r io.Reader
 	if subID == "" {
 		return nil, errors.New("empty subject id")
 	}
+	if err = checkSubjectID(subID); err != nil {
+		return nil, err
+	}
 
 	key, err := p.subjectKey(ctx, subID)
 	if err != nil {
@@ -426,6 +458,9 @@ func (p *protector) DeriveSubjectKey(ctx context.Context, subID, purpose string)
 
 	if subID == "" {
 		return nil, errors.New("empty subject id")
+	}
+	if err = checkSubjectID(subID); err != nil {
+		return nil, err
 	}
 	if len(subID) > 1<<16-1 {
 		return nil, errors.New("subject id too long")
@@ -485,6 +520,10 @@ func (p *protector) Forget(ctx context.Context, subID string) (err error) {
 		}
 	}()
 
+	if err = checkSubjectID(subID); err != nil {
+		return
+	}
+
 	if p.GracefulMode {
 		err = p.KeyEngine.DisableKey(ctx, p.namespace, subID)
 		return
@@ -512,6 +551,10 @@ func (p *protector) Recover(ctx context.Context, subID string) (err error) {
 
 		}
 	}()
+
+	if err = checkSubjectID(subID); err != nil {
+		return
+	}
 
 	err = p.KeyEngine.ReEnableKey(ctx, p.namespace, subID)
 	return
@@ -580,7 +623,8 @@ func (p *protector) encryptKeyRing(ctx context.Context, structSubjects, valueSub
 func collectValueSubjects(structs []sensitive.Struct) ([]string, error) {
 	subjects := make([]string, 0)
 	collect := func(_ sensitive.FieldReplace, val string) (string, error) {
-		if wv, err := parseWireValue(val); err == nil {
+		// A reserved subject is never fetched: openValue refuses it.
+		if wv, err := parseWireValue(val); err == nil && !isReservedID(wv.subjectID) {
 			subjects = append(subjects, wv.subjectID)
 		}
 		return val, nil
@@ -605,6 +649,9 @@ func (p *protector) openValue(fr sensitive.FieldReplace, wv wireValue, ring keyR
 	}
 	if wv.keyVersion != subjectKeyVersion {
 		return nil, "", fmt.Errorf("%w: unsupported key version %d at %s", ErrInvalidWireFormat, wv.keyVersion, fr.Path)
+	}
+	if isReservedID(wv.subjectID) {
+		return nil, "", fmt.Errorf("%w at %s", ErrReservedSubjectID, fr.Path)
 	}
 
 	key, state := ring.lookup(wv.subjectID)
