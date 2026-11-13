@@ -182,6 +182,44 @@ func TestForget_ImmediateErases(t *testing.T) {
 	}
 }
 
+// Immediately() erases at once on a graceful protector, for that call only:
+// the key material is deleted, the vault entry erased, and Recover fails. The
+// next Forget without the option is graceful again.
+func TestForget_ImmediatelyOverridesGracefulMode(t *testing.T) {
+	l := newLifecycle(t, true)
+	now := l.tokenize("frank@example.org")
+	later := l.tokenize("grace@example.org")
+	l.encrypt(now, "note")
+	l.encrypt(later, "note")
+
+	if err := l.p.Forget(l.ctx, now, Immediately()); err != nil {
+		t.Fatal(err)
+	}
+	_, missing, err := l.keys.GetKeys(l.ctx, "tnt-life", []string{now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missing[now] != core.StateDeleted {
+		t.Fatalf("key state %s, want DELETED", missing[now])
+	}
+	if r := l.listed(now); r.State != core.TokenErased {
+		t.Fatalf("state %s, want ERASED", r.State)
+	}
+	if err := l.p.Recover(l.ctx, now); !errors.Is(err, ErrCannotRecoverSubject) {
+		t.Fatalf("Recover after Forget(Immediately()): expect ErrCannotRecoverSubject, got %v", err)
+	}
+
+	if err := l.p.Forget(l.ctx, later); err != nil {
+		t.Fatal(err)
+	}
+	if r := l.listed(later); r.State != core.TokenForgotten {
+		t.Fatalf("state %s, want FORGOTTEN: the option must not outlive its call", r.State)
+	}
+	if err := l.p.Recover(l.ctx, later); err != nil {
+		t.Fatalf("Recover after a graceful Forget: %v", err)
+	}
+}
+
 // V10: a token never used as a subject has no key but has a vault entry;
 // Forget succeeds and hides it.
 func TestForget_TokenWithoutKey(t *testing.T) {

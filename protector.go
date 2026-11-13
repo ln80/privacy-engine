@@ -109,7 +109,12 @@ type Protector interface {
 
 	// Forget removes the associated encryption materials of the given subject,
 	// and crypto-erases its Personal data.
-	Forget(ctx context.Context, subID string) error
+	//
+	// In graceful mode (the default) the key is disabled and the vault entry
+	// hidden; both are erased once the grace period ends, and Recover works
+	// until then. Immediately() erases both at once for this call, whatever
+	// the protector's GracefulMode.
+	Forget(ctx context.Context, subID string, opts ...func(*ForgetConfig)) error
 
 	// Recover allows to recover encryption materials of the given subject.
 	//
@@ -510,8 +515,22 @@ func (p *protector) DecryptStreamWithKey(ctx context.Context, key core.Key, r io
 	return p.Encryptor.DecryptStream(p.callerKeyBinding(), key, r)
 }
 
+// ForgetConfig configures one Forget call.
+type ForgetConfig struct {
+	// Immediate deletes the subject's key material and erases its vault entry
+	// at once, whatever ProtectorConfig.GracefulMode. Recover then fails.
+	Immediate bool
+}
+
+// Immediately makes one Forget call erase at once instead of gracefully: use
+// it where the product promises erasure without a recovery window, such as
+// account deletion.
+func Immediately() func(*ForgetConfig) {
+	return func(c *ForgetConfig) { c.Immediate = true }
+}
+
 // Forget implements Protector.
-func (p *protector) Forget(ctx context.Context, subID string) (err error) {
+func (p *protector) Forget(ctx context.Context, subID string, opts ...func(*ForgetConfig)) (err error) {
 
 	defer func() {
 		if err != nil {
@@ -526,8 +545,16 @@ func (p *protector) Forget(ctx context.Context, subID string) (err error) {
 		return
 	}
 
+	cfg := ForgetConfig{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+	graceful := p.GracefulMode && !cfg.Immediate
+
 	var keyErr error
-	if p.GracefulMode {
+	if graceful {
 		keyErr = p.KeyEngine.DisableKey(ctx, p.namespace, subID)
 	} else {
 		keyErr = p.KeyEngine.DeleteKey(ctx, p.namespace, subID)
@@ -536,7 +563,7 @@ func (p *protector) Forget(ctx context.Context, subID string) (err error) {
 		return keyErr
 	}
 
-	hadEntry, err := p.forgetVaultEntry(ctx, subID)
+	hadEntry, err := p.forgetVaultEntry(ctx, subID, graceful)
 	if err != nil {
 		return err
 	}
@@ -554,12 +581,12 @@ func (p *protector) Forget(ctx context.Context, subID string) (err error) {
 // same person tokenized again gets a new one (decision V3); the sealed value
 // stays for Recover until the janitor's EraseForgotten. Immediate mode erases
 // it at once.
-func (p *protector) forgetVaultEntry(ctx context.Context, token string) (bool, error) {
+func (p *protector) forgetVaultEntry(ctx context.Context, token string, graceful bool) (bool, error) {
 	if p.TokenEngine == nil {
 		return false, nil
 	}
 	var err error
-	if p.GracefulMode {
+	if graceful {
 		err = p.TokenEngine.Forget(ctx, p.namespace, token, time.Now())
 	} else {
 		err = p.TokenEngine.Erase(ctx, p.namespace, token)

@@ -59,6 +59,10 @@ func main() {
     _ = protector.Forget(ctx, "user-123")
     _ = protector.Decrypt(ctx, &user)
     // user.Email is now "redacted" (from the replace tag option)
+
+    // Forget is graceful by default: Recover works until the grace period
+    // ends. Immediately() erases at once, for this call only.
+    _ = protector.Forget(ctx, "user-456", privacy.Immediately())
 }
 ```
 
@@ -134,8 +138,8 @@ security boundary. KMS is optional.
 
 | Call | Effect on a token |
 |---|---|
-| `Forget(token)`, graceful (default) | Hidden at once: `Detokenize` omits it, `ListTokens` shows it `FORGOTTEN` without its value, and the value no longer finds it, so the same person tokenized again gets a **new** token. The sealed value is kept for `Recover`, until the janitor runs `TokenEngine.EraseForgotten` with the grace period |
-| `Forget(token)`, immediate | Erased: the sealed value is deleted (`ERASED`) |
+| `Forget(token)`, graceful (default) | Hidden at once: `Detokenize` omits it, `ListTokens` shows it `FORGOTTEN` without its value, and the value no longer finds it, so the same person tokenized again gets a **new** token. The sealed value is kept for `Recover` until the grace period ends: the token engine then erases it, by itself or when a janitor runs `TokenEngine.EraseForgotten` |
+| `Forget(token)`, immediate (`GracefulMode = false`, or `Forget(token, Immediately())` for one call) | Erased: the sealed value is deleted (`ERASED`) |
 | `Recover(token)` | A forgotten token becomes active again; if the value was tokenized again meanwhile, it stays with the newer token |
 | `DeleteToken(token)` | The mapping is deleted; the subject's data is not erased (use `Forget`) |
 | `PurgeNamespace` (`Protector.Purge`) | Every token and the vault key are deleted |
@@ -191,7 +195,7 @@ defer clearFn()
 |--------|---------|-------------|
 | `CacheEnabled` | `true` | Wrap the key engine with an in-memory TTL cache (the token engine is not cached; the vault key is cached with the other keys) |
 | `CacheTTL` | `20s` | Cache time-to-live |
-| `GracefulMode` | `true` | Disable keys before deleting (allows recovery) |
+| `GracefulMode` | `true` | Disable keys before deleting (allows recovery). `Forget(id, Immediately())` overrides it for one call |
 | `Encryptor` | AES-256-GCM | Encryption algorithm |
 | `TokenEngine` | `nil` | Token engine for pseudonymization |
 
