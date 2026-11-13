@@ -119,16 +119,21 @@ type Protector interface {
 	// Clear clears encryption materials' cache based on cache-related configuration.
 	Clear(ctx context.Context, force bool) error
 
-	// Tokenize tokenizes the given values.
+	// Tokenize returns the token of each value, creating one for a value the
+	// namespace has never seen (or whose token was forgotten). The vault stores
+	// each value sealed and looked up through a keyed blind index: never in
+	// clear (token vault v2, see vault.go).
 	Tokenize(ctx context.Context, values []core.TokenData, opts ...func(*core.TokenizeConfig)) (core.ValueTokenMap, error)
 
-	// Detokenize detokenizes the given tokens.
+	// Detokenize returns the value of each active token. Unknown, forgotten
+	// and erased tokens are omitted.
 	Detokenize(ctx context.Context, tokens []string) (core.TokenValueMap, error)
 
 	// DeleteToken deletes the given token.
 	DeleteToken(ctx context.Context, token string) error
 
-	// ListTokens lists the tokens.
+	// ListTokens lists a page of tokens with their state. Values are set for
+	// active tokens only.
 	ListTokens(ctx context.Context, query core.ListTokensQuery) (result *core.ListTokensResult, err error)
 
 	// Purge hard-deletes every encryption key and token in the protector's
@@ -157,7 +162,9 @@ type ProtectorConfig struct {
 	// Therefore recovery may succeed. Otherwise, encryption materials are immediately deleted.
 	GracefulMode bool
 
-	// TokenEngine is an implementation of core.TokenEngine
+	// TokenEngine stores the token vault (core.TokenEngine). It is never
+	// cached: the vault holds sealed values, and the vault key is cached with
+	// the other keys.
 	TokenEngine core.TokenEngine
 
 	// MultipleSubjects lets Encrypt accept a struct whose data belongs to
@@ -220,11 +227,6 @@ func NewProtector(namespace string, engine core.KeyEngine, opts ...func(*Protect
 	if p.CacheEnabled {
 		if _, ok := p.KeyEngine.(core.KeyEngineCache); !ok {
 			p.KeyEngine = memory.NewCacheWrapper(p.KeyEngine, p.CacheTTL)
-		}
-		if p.TokenEngine != nil {
-			if _, ok := p.TokenEngine.(core.TokenEngineCache); !ok {
-				p.TokenEngine = memory.NewTokenCacheWrapper(p.TokenEngine, p.CacheTTL)
-			}
 		}
 	}
 
@@ -748,44 +750,7 @@ func (p *protector) Clear(ctx context.Context, force bool) (err error) {
 		}
 	}
 
-	if cp, ok := p.TokenEngine.(core.TokenEngineCache); ok {
-		if e := cp.ClearCache(ctx, p.namespace, force); e != nil {
-			err = errors.Join(err, e)
-		}
-	}
-
 	return
-}
-
-// Detokenize implements Protector.
-func (p *protector) Detokenize(ctx context.Context, tokens []string) (core.TokenValueMap, error) {
-	if p.TokenEngine == nil {
-		return nil, core.ErrTokenEngineNotConfigured
-	}
-	return p.TokenEngine.Detokenize(ctx, p.namespace, tokens)
-}
-
-// Tokenize implements Protector.
-func (p *protector) Tokenize(ctx context.Context, values []core.TokenData, opts ...func(*core.TokenizeConfig)) (core.ValueTokenMap, error) {
-	if p.TokenEngine == nil {
-		return nil, core.ErrTokenEngineNotConfigured
-	}
-	return p.TokenEngine.Tokenize(ctx, p.namespace, values, opts...)
-}
-
-func (p *protector) DeleteToken(ctx context.Context, token string) error {
-	if p.TokenEngine == nil {
-		return core.ErrTokenEngineNotConfigured
-	}
-	return p.TokenEngine.DeleteToken(ctx, p.namespace, token)
-}
-
-// ListTokens implements Protector.
-func (p *protector) ListTokens(ctx context.Context, query core.ListTokensQuery) (result *core.ListTokensResult, err error) {
-	if p.TokenEngine == nil {
-		return nil, core.ErrTokenEngineNotConfigured
-	}
-	return p.TokenEngine.ListTokens(ctx, p.namespace, query)
 }
 
 // Purge implements Protector.
