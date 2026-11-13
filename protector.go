@@ -526,13 +526,52 @@ func (p *protector) Forget(ctx context.Context, subID string) (err error) {
 		return
 	}
 
+	var keyErr error
 	if p.GracefulMode {
-		err = p.KeyEngine.DisableKey(ctx, p.namespace, subID)
-		return
+		keyErr = p.KeyEngine.DisableKey(ctx, p.namespace, subID)
+	} else {
+		keyErr = p.KeyEngine.DeleteKey(ctx, p.namespace, subID)
+	}
+	if keyErr != nil && !errors.Is(keyErr, core.ErrKeyNotFound) {
+		return keyErr
 	}
 
-	err = p.KeyEngine.DeleteKey(ctx, p.namespace, subID)
-	return
+	hadEntry, err := p.forgetVaultEntry(ctx, subID)
+	if err != nil {
+		return err
+	}
+	// ErrKeyNotFound only when the ID had neither a key nor a vault entry
+	// (decision V10): a token never used as a subject has only the latter.
+	if keyErr != nil && !hadEntry {
+		return keyErr
+	}
+	return nil
+}
+
+// forgetVaultEntry applies Forget to the ID's vault entry, if the protector
+// has a token engine and the ID is a token. Graceful mode hides the entry and
+// removes its index entry, so the value no longer finds the token and the
+// same person tokenized again gets a new one (decision V3); the sealed value
+// stays for Recover until the janitor's EraseForgotten. Immediate mode erases
+// it at once.
+func (p *protector) forgetVaultEntry(ctx context.Context, token string) (bool, error) {
+	if p.TokenEngine == nil {
+		return false, nil
+	}
+	var err error
+	if p.GracefulMode {
+		err = p.TokenEngine.Forget(ctx, p.namespace, token, time.Now())
+	} else {
+		err = p.TokenEngine.Erase(ctx, p.namespace, token)
+	}
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, core.ErrTokenNotFound):
+		return false, nil
+	default:
+		return false, err
+	}
 }
 
 // Recover implements Protector.
@@ -558,8 +597,38 @@ func (p *protector) Recover(ctx context.Context, subID string) (err error) {
 		return
 	}
 
-	err = p.KeyEngine.ReEnableKey(ctx, p.namespace, subID)
-	return
+	keyErr := p.KeyEngine.ReEnableKey(ctx, p.namespace, subID)
+	if keyErr != nil && !errors.Is(keyErr, core.ErrKeyNotFound) {
+		return keyErr
+	}
+
+	restored, err := p.restoreVaultEntry(ctx, subID)
+	if err != nil {
+		return err
+	}
+	if keyErr != nil && !restored {
+		return keyErr
+	}
+	return nil
+}
+
+// restoreVaultEntry makes a forgotten vault entry active again. Its index entry
+// is recreated unless a newer token took the value meanwhile; the old data is
+// then recovered and the value stays with the newer token (decision V11). An
+// erased entry cannot come back.
+func (p *protector) restoreVaultEntry(ctx context.Context, token string) (bool, error) {
+	if p.TokenEngine == nil {
+		return false, nil
+	}
+	_, err := p.TokenEngine.Restore(ctx, p.namespace, token)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, core.ErrTokenNotFound), errors.Is(err, core.ErrTokenErased):
+		return false, nil
+	default:
+		return false, err
+	}
 }
 
 // keyRing holds the keys fetched for one Encrypt or Decrypt call and the
