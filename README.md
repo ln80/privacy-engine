@@ -107,7 +107,7 @@ p := privacy.NewProtector("tenant", engine, func(pc *privacy.ProtectorConfig) {
 
 - **KeyEngine** manages encryption key lifecycle (create, get, disable, re-enable, delete). Implementations: in-memory (for tests), DynamoDB + KMS (production, see [privacy-engine.elastic](https://github.com/ln80/privacy-engine.elastic)).
 - **Encryptor** handles the actual encryption. Default: AES-256-GCM with random nonces; the AAD binds the namespace, the key version and the algorithm ID (`core.Binding`).
-- **TokenEngine** manages value-to-token mappings for pseudonymization. Optional.
+- **TokenEngine** stores the token vault for pseudonymization: opaque sealed records and blind-index entries, never values in clear. Optional.
 
 ## Tokenization
 
@@ -118,6 +118,31 @@ tokens, _ := protector.Tokenize(ctx, privacy.TokenDataSlice("alice@example.com")
 surrogateID := tokens.Get("alice@example.com").Token
 // Use surrogateID downstream instead of the real email
 ```
+
+Tokens are random (UUIDv4 by default); a custom `TokenGenFunc` never receives
+the value, so tokens cannot be derived from it. The same value always gets the
+same token in a namespace, until that token is forgotten.
+
+The vault never holds a value in clear. Each namespace has one vault key
+(`@vault`, kept by the key engine like any DEK); two keys are derived from it:
+one seals each value (AES-256-GCM, bound to its token and namespace), the other
+computes the keyed blind index that `Tokenize` looks values up by. The vault
+is as strong as the key engine that holds `@vault`: wrapped by KMS, a reader
+of the table without `kms:Decrypt` sees tokens and ciphertext only; without a
+key wrapper, sealing keeps values out of keys and indexes but is not a
+security boundary. KMS is optional.
+
+| Call | Effect on a token |
+|---|---|
+| `Forget(token)`, graceful (default) | Hidden at once: `Detokenize` omits it, `ListTokens` shows it `FORGOTTEN` without its value, and the value no longer finds it, so the same person tokenized again gets a **new** token. The sealed value is kept for `Recover`, until the janitor runs `TokenEngine.EraseForgotten` with the grace period |
+| `Forget(token)`, immediate | Erased: the sealed value is deleted (`ERASED`) |
+| `Recover(token)` | A forgotten token becomes active again; if the value was tokenized again meanwhile, it stays with the newer token |
+| `DeleteToken(token)` | The mapping is deleted; the subject's data is not erased (use `Forget`) |
+| `PurgeNamespace` (`Protector.Purge`) | Every token and the vault key are deleted |
+
+IDs starting with `@` are reserved for the library and refused as subject IDs
+and tokens. The full design is in privacy-engine.elastic
+`docs/token-vault-v2.md`.
 
 ## Streaming Encryption
 
@@ -164,7 +189,7 @@ defer clearFn()
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `CacheEnabled` | `true` | Wrap engines with in-memory TTL cache |
+| `CacheEnabled` | `true` | Wrap the key engine with an in-memory TTL cache (the token engine is not cached; the vault key is cached with the other keys) |
 | `CacheTTL` | `20s` | Cache time-to-live |
 | `GracefulMode` | `true` | Disable keys before deleting (allows recovery) |
 | `Encryptor` | AES-256-GCM | Encryption algorithm |
