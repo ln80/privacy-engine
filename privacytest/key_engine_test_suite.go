@@ -10,9 +10,24 @@ import (
 )
 
 type KeyEngineTestConfig struct {
-	GracePeriod          time.Duration
+	// GracePeriod is the engine's grace period. When set, the suite checks
+	// that a key disabled longer than it is deleted and cannot be re-enabled.
+	GracePeriod time.Duration
+	// AutoDeleteUnusedHook replaces the suite's DeleteUnusedKeys calls.
 	AutoDeleteUnusedHook func()
-	Namespace            string
+	// ErasesWithoutJanitor declares an engine that deletes keys disabled
+	// longer than GracePeriod by itself (for example through a storage TTL),
+	// without DeleteUnusedKeys. The suite then never calls DeleteUnusedKeys
+	// and still expects DELETED and ErrKeyNotFound once the period is over.
+	ErasesWithoutJanitor bool
+	// KeyMaterialProbe reads the backend's storage directly, bypassing the
+	// engine, and reports whether key material is still stored for keyID.
+	// When set, the suite checks that none is left after DeleteKey,
+	// DeleteUnusedKeys and PurgeNamespace. It is not checked after the grace
+	// period of an engine that ErasesWithoutJanitor: a storage TTL removes the
+	// material later, and the engine must only stop returning it.
+	KeyMaterialProbe func(ctx context.Context, namespace, keyID string) (stored bool, err error)
+	Namespace        string
 }
 
 func RunKeyEngineTest(t *testing.T, ctx context.Context, eng core.KeyEngine, opts ...func(*KeyEngineTestConfig)) {
@@ -51,6 +66,37 @@ func RunKeyEngineTest(t *testing.T, ctx context.Context, eng core.KeyEngine, opt
 		t.Fatalf("expect keys map be empty, got: %v", keys)
 	}
 	assertMissing(t, missing, core.KeyStates{neverSeen: core.StateUnknown})
+
+	// Unknown subjects (decision E1): DisableKey and ReEnableKey report
+	// ErrKeyNotFound, DeleteKey succeeds, and none of them creates a record.
+	if err := eng.DisableKey(ctx, namespace, neverSeen); !errors.Is(err, core.ErrKeyNotFound) {
+		t.Fatalf("DisableKey of an unknown subject: expect ErrKeyNotFound, got: %v", err)
+	}
+	if err := eng.ReEnableKey(ctx, namespace, neverSeen); !errors.Is(err, core.ErrKeyNotFound) {
+		t.Fatalf("ReEnableKey of an unknown subject: expect ErrKeyNotFound, got: %v", err)
+	}
+	if err := eng.DeleteKey(ctx, namespace, neverSeen); err != nil {
+		t.Fatalf("DeleteKey of an unknown subject: expect nil, got: %v", err)
+	}
+	_, missing, err = eng.GetKeys(ctx, namespace, []string{neverSeen})
+	if err != nil {
+		t.Fatalf("expect err be nil, got: %v", err)
+	}
+	assertMissing(t, missing, core.KeyStates{neverSeen: core.StateUnknown})
+
+	noMaterial := func(ns, keyID, after string) {
+		t.Helper()
+		if cfg.KeyMaterialProbe == nil {
+			return
+		}
+		stored, err := cfg.KeyMaterialProbe(ctx, ns, keyID)
+		if err != nil {
+			t.Fatalf("key material probe: %v", err)
+		}
+		if stored {
+			t.Fatalf("key material of %s is still stored after %s", keyID, after)
+		}
+	}
 
 	keyIDs := []string{
 		randomID(),
@@ -149,6 +195,7 @@ func RunKeyEngineTest(t *testing.T, ctx context.Context, eng core.KeyEngine, opt
 	if want, got := empty, keys.KeyIDs(); !keysEqual(want, got) {
 		t.Fatalf("expect %v, %v be equals", want, got)
 	}
+	noMaterial(namespace, keyIDs[0], "DeleteKey")
 	// Test renable key after a hard delete
 	if want, err := core.ErrKeyNotFound, eng.ReEnableKey(ctx, namespace, keyIDs[0]); !errors.Is(err, want) {
 		t.Fatalf("expect err be %v, got: %v", want, err)
@@ -167,9 +214,12 @@ func RunKeyEngineTest(t *testing.T, ctx context.Context, eng core.KeyEngine, opt
 		// Honore the grace Period which supposed to be short
 		time.Sleep(cfg.GracePeriod)
 
-		if cfg.AutoDeleteUnusedHook != nil {
+		switch {
+		case cfg.ErasesWithoutJanitor:
+			// The engine erases by itself: no janitor call.
+		case cfg.AutoDeleteUnusedHook != nil:
 			cfg.AutoDeleteUnusedHook()
-		} else {
+		default:
 			// Assert the action runs with success
 			if want, err := nilErr, eng.DeleteUnusedKeys(ctx, namespace); !errors.Is(err, want) {
 				t.Fatalf("expect err be %v, got: %v", want, err)
@@ -189,6 +239,9 @@ func RunKeyEngineTest(t *testing.T, ctx context.Context, eng core.KeyEngine, opt
 			t.Fatalf("expect err be nil, got: %v", err)
 		}
 		assertMissing(t, missing, core.KeyStates{keyIDs[1]: core.StateDeleted})
+		if !cfg.ErasesWithoutJanitor {
+			noMaterial(namespace, keyIDs[1], "DeleteUnusedKeys")
+		}
 	}
 
 	// Test PurgeNamespace: create keys in two namespaces, purge one, assert
@@ -223,6 +276,9 @@ func RunKeyEngineTest(t *testing.T, ctx context.Context, eng core.KeyEngine, opt
 	assertMissing(t, missing, core.KeyStates{keyIDs[0]: core.StateUnknown, keyIDs[1]: core.StateUnknown, keyIDs[2]: core.StateUnknown})
 	if want, got := empty, keys.KeyIDs(); !keysEqual(want, got) {
 		t.Fatalf("expect %v, %v be equals", want, got)
+	}
+	for _, id := range keyIDs {
+		noMaterial(namespace, id, "PurgeNamespace")
 	}
 
 	// Sibling namespace untouched

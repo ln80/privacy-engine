@@ -15,6 +15,20 @@ import (
 
 type TokenEngineTestConfig struct {
 	Namespace string
+	// GracePeriod declares an engine that erases a record forgotten longer
+	// than it ago by itself (for example through a storage TTL), without
+	// EraseForgotten: the record then reads ERASED with no sealed value and
+	// cannot be restored. Zero means the engine relies on EraseForgotten. The
+	// rest of the suite forgets records up to two hours in the past and
+	// expects them to stay restorable, so it must be longer than three hours.
+	GracePeriod time.Duration
+	// SealedProbe reads the backend's storage directly, bypassing the engine,
+	// and reports whether a sealed value is still stored for token. When set,
+	// the suite checks that none is left after Erase, EraseForgotten,
+	// DeleteToken and PurgeNamespace. It is not checked for records erased by
+	// the grace period: a storage TTL removes the value later, and the engine
+	// must only stop returning it.
+	SealedProbe func(ctx context.Context, namespace, token string) (stored bool, err error)
 }
 
 func randomBytes(n int) []byte {
@@ -66,6 +80,17 @@ func RunTokenEngineTest(t *testing.T, ctx context.Context, eng core.TokenEngine,
 			return ""
 		}
 		return r.State
+	}
+	noSealed := func(namespace, token, after string) {
+		t.Helper()
+		if cfg.SealedProbe == nil {
+			return
+		}
+		stored, err := cfg.SealedProbe(ctx, namespace, token)
+		must(err)
+		if stored {
+			t.Fatalf("sealed value of %s is still stored after %s", token, after)
+		}
 	}
 	indexOf := func(idx []byte) string {
 		t.Helper()
@@ -182,6 +207,8 @@ func RunTokenEngineTest(t *testing.T, ctx context.Context, eng core.TokenEngine,
 	if indexOf(b.Index) != "" {
 		t.Fatal("Erase left the record's own index entry")
 	}
+	noSealed(ns, a.Token, "Erase")
+	noSealed(ns, b.Token, "Erase")
 	if err := eng.Erase(ctx, ns, "unknown"); !errors.Is(err, core.ErrTokenNotFound) {
 		t.Fatalf("Erase unknown: expect ErrTokenNotFound, got %v", err)
 	}
@@ -198,12 +225,14 @@ func RunTokenEngineTest(t *testing.T, ctx context.Context, eng core.TokenEngine,
 	if n != 1 || state(old.Token) != core.TokenErased || state(recent.Token) != core.TokenForgotten {
 		t.Fatalf("EraseForgotten: erased %d, old=%s recent=%s", n, state(old.Token), state(recent.Token))
 	}
+	noSealed(ns, old.Token, "EraseForgotten")
 
 	// DeleteToken: record and own index entry gone; unknown is a no-op.
 	must(eng.DeleteToken(ctx, ns, newer.Token))
 	if state(newer.Token) != "" || indexOf(newer.Index) != "" {
 		t.Fatal("DeleteToken left the record or its index entry")
 	}
+	noSealed(ns, newer.Token, "DeleteToken")
 	must(eng.DeleteToken(ctx, ns, "unknown"))
 	reuse := newRecord("tok-reuse-" + randomID())
 	reuse.Index = bytes.Clone(newer.Index)
@@ -249,6 +278,31 @@ func RunTokenEngineTest(t *testing.T, ctx context.Context, eng core.TokenEngine,
 		t.Fatalf("ListTokens: got %v, want %v", got, listed)
 	}
 
+	// Erasure by the grace period, without EraseForgotten.
+	if cfg.GracePeriod > 0 {
+		c := newRecord("tok-expired-" + randomID())
+		must(eng.Insert(ctx, ns, c))
+		must(eng.Forget(ctx, ns, c.Token, time.Now().Add(-cfg.GracePeriod-2*time.Second)))
+		got, err := eng.GetRecords(ctx, ns, []string{c.Token})
+		must(err)
+		if r := got[c.Token]; r.State != core.TokenErased || len(r.Sealed) != 0 {
+			t.Fatalf("forgotten past the grace period: got state %s with %d sealed bytes, want ERASED with none", r.State, len(r.Sealed))
+		}
+		if _, err := eng.Restore(ctx, ns, c.Token); !errors.Is(err, core.ErrTokenErased) {
+			t.Fatalf("Restore past the grace period: expect ErrTokenErased, got %v", err)
+		}
+		if indexOf(c.Index) != "" {
+			t.Fatal("a record past the grace period still holds its index entry")
+		}
+		page, err := eng.ListTokens(ctx, ns, core.ListTokensQuery{Prefix: "tok-expired-"})
+		must(err)
+		if len(page.Records) != 1 || page.Records[0].State != core.TokenErased || len(page.Records[0].Sealed) != 0 {
+			t.Fatalf("ListTokens past the grace period: got %+v", page.Records)
+		}
+		must(eng.Erase(ctx, ns, c.Token)) // still a no-op, and now physically gone
+		noSealed(ns, c.Token, "Erase")
+	}
+
 	// PurgeNamespace: everything gone, sibling intact, idempotent.
 	sibling := ns + "-other"
 	s := newRecord("tok-sibling-" + randomID())
@@ -260,6 +314,7 @@ func RunTokenEngineTest(t *testing.T, ctx context.Context, eng core.TokenEngine,
 	if len(all.Records) != 0 || indexOf(reuse.Index) != "" {
 		t.Fatalf("PurgeNamespace left %d records", len(all.Records))
 	}
+	noSealed(ns, reuse.Token, "PurgeNamespace")
 	if got, err := eng.GetRecords(ctx, sibling, []string{s.Token}); err != nil || len(got) != 1 {
 		t.Fatalf("PurgeNamespace touched a sibling namespace: %v, %v", got, err)
 	}

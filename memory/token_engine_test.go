@@ -8,5 +8,16 @@ import (
 )
 
 func TestTokenEngine(t *testing.T) {
-	privacytest.RunTokenEngineTest(t, context.Background(), NewTokenEngine())
+	eng := NewTokenEngine()
+	privacytest.RunTokenEngineTest(t, context.Background(), eng, func(c *privacytest.TokenEngineTestConfig) {
+		c.SealedProbe = func(_ context.Context, ns, token string) (bool, error) {
+			eng.mu.Lock()
+			defer eng.mu.Unlock()
+			v, ok := eng.ns[ns]
+			if !ok {
+				return false, nil
+			}
+			return len(v.records[token].Sealed) > 0, nil
+		}
+	})
 }

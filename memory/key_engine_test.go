@@ -18,7 +18,14 @@ func TestKeyEngine(t *testing.T) {
 	t.Run("in-memory engine", func(t *testing.T) {
 		eng := NewKeyEngine()
 
-		privacytest.RunKeyEngineTest(t, ctx, eng)
+		privacytest.RunKeyEngineTest(t, ctx, eng, func(c *privacytest.KeyEngineTestConfig) {
+			c.KeyMaterialProbe = func(_ context.Context, ns, keyID string) (bool, error) {
+				e := eng.(*engine)
+				e.mu.Lock()
+				defer e.mu.Unlock()
+				return len(e.cache[ns][keyID].Key) > 0, nil
+			}
+		})
 	})
 
 	t.Run("in-memory cache wrapper engine", func(t *testing.T) {
