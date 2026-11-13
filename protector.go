@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/ln80/privacy-engine/aes"
@@ -37,7 +38,27 @@ var (
 	// does not authenticate under its subject's active key: tampered, forged,
 	// or encrypted elsewhere. Encrypt refuses to keep or re-encrypt it.
 	ErrValueNotAuthentic = newErr("value looks encrypted but does not authenticate")
+
+	// ErrReservedSubjectID means a subject ID starts with "@". Those IDs name
+	// the library's own keys (the vault key is "@vault") and cannot be used to
+	// encrypt, forget, recover or derive.
+	ErrReservedSubjectID = newErr("subject IDs starting with @ are reserved")
 )
+
+// reservedIDPrefix marks IDs that belong to the library, such as vaultKeyID.
+const reservedIDPrefix = "@"
+
+func isReservedID(id string) bool {
+	return strings.HasPrefix(id, reservedIDPrefix)
+}
+
+// checkSubjectID refuses a reserved subject ID.
+func checkSubjectID(id string) error {
+	if isReservedID(id) {
+		return ErrReservedSubjectID
+	}
+	return nil
+}
 
 // Protector presents the service's interface that encrypts, decrypts,
 // and crypto-erases subjects' Personal data.
@@ -98,16 +119,21 @@ type Protector interface {
 	// Clear clears encryption materials' cache based on cache-related configuration.
 	Clear(ctx context.Context, force bool) error
 
-	// Tokenize tokenizes the given values.
+	// Tokenize returns the token of each value, creating one for a value the
+	// namespace has never seen (or whose token was forgotten). The vault stores
+	// each value sealed and looked up through a keyed blind index: never in
+	// clear (token vault v2, see vault.go).
 	Tokenize(ctx context.Context, values []core.TokenData, opts ...func(*core.TokenizeConfig)) (core.ValueTokenMap, error)
 
-	// Detokenize detokenizes the given tokens.
+	// Detokenize returns the value of each active token. Unknown, forgotten
+	// and erased tokens are omitted.
 	Detokenize(ctx context.Context, tokens []string) (core.TokenValueMap, error)
 
 	// DeleteToken deletes the given token.
 	DeleteToken(ctx context.Context, token string) error
 
-	// ListTokens lists the tokens.
+	// ListTokens lists a page of tokens with their state. Values are set for
+	// active tokens only.
 	ListTokens(ctx context.Context, query core.ListTokensQuery) (result *core.ListTokensResult, err error)
 
 	// Purge hard-deletes every encryption key and token in the protector's
@@ -136,7 +162,9 @@ type ProtectorConfig struct {
 	// Therefore recovery may succeed. Otherwise, encryption materials are immediately deleted.
 	GracefulMode bool
 
-	// TokenEngine is an implementation of core.TokenEngine
+	// TokenEngine stores the token vault (core.TokenEngine). It is never
+	// cached: the vault holds sealed values, and the vault key is cached with
+	// the other keys.
 	TokenEngine core.TokenEngine
 
 	// MultipleSubjects lets Encrypt accept a struct whose data belongs to
@@ -200,11 +228,6 @@ func NewProtector(namespace string, engine core.KeyEngine, opts ...func(*Protect
 		if _, ok := p.KeyEngine.(core.KeyEngineCache); !ok {
 			p.KeyEngine = memory.NewCacheWrapper(p.KeyEngine, p.CacheTTL)
 		}
-		if p.TokenEngine != nil {
-			if _, ok := p.TokenEngine.(core.TokenEngineCache); !ok {
-				p.TokenEngine = memory.NewTokenCacheWrapper(p.TokenEngine, p.CacheTTL)
-			}
-		}
 	}
 
 	return p
@@ -248,6 +271,11 @@ func (p *protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) 
 
 	slices.Sort(subjectIDs)
 	subjectIDs = slices.Compact(subjectIDs)
+	for _, id := range subjectIDs {
+		if err = checkSubjectID(id); err != nil {
+			return err
+		}
+	}
 
 	// Values already in wire format may name other subjects (a copied value);
 	// their keys are needed to authenticate them.
@@ -378,6 +406,9 @@ func (p *protector) EncryptStream(ctx context.Context, subID string, r io.Reader
 	if subID == "" {
 		return nil, errors.New("empty subject id")
 	}
+	if err = checkSubjectID(subID); err != nil {
+		return nil, err
+	}
 
 	keys, err := p.KeyEngine.GetOrCreateKeys(ctx, p.namespace, []string{subID}, p.Encryptor.KeyGen())
 	if err != nil {
@@ -405,6 +436,9 @@ func (p *protector) DecryptStream(ctx context.Context, subID string, r io.Reader
 	if subID == "" {
 		return nil, errors.New("empty subject id")
 	}
+	if err = checkSubjectID(subID); err != nil {
+		return nil, err
+	}
 
 	key, err := p.subjectKey(ctx, subID)
 	if err != nil {
@@ -426,6 +460,9 @@ func (p *protector) DeriveSubjectKey(ctx context.Context, subID, purpose string)
 
 	if subID == "" {
 		return nil, errors.New("empty subject id")
+	}
+	if err = checkSubjectID(subID); err != nil {
+		return nil, err
 	}
 	if len(subID) > 1<<16-1 {
 		return nil, errors.New("subject id too long")
@@ -485,13 +522,56 @@ func (p *protector) Forget(ctx context.Context, subID string) (err error) {
 		}
 	}()
 
-	if p.GracefulMode {
-		err = p.KeyEngine.DisableKey(ctx, p.namespace, subID)
+	if err = checkSubjectID(subID); err != nil {
 		return
 	}
 
-	err = p.KeyEngine.DeleteKey(ctx, p.namespace, subID)
-	return
+	var keyErr error
+	if p.GracefulMode {
+		keyErr = p.KeyEngine.DisableKey(ctx, p.namespace, subID)
+	} else {
+		keyErr = p.KeyEngine.DeleteKey(ctx, p.namespace, subID)
+	}
+	if keyErr != nil && !errors.Is(keyErr, core.ErrKeyNotFound) {
+		return keyErr
+	}
+
+	hadEntry, err := p.forgetVaultEntry(ctx, subID)
+	if err != nil {
+		return err
+	}
+	// ErrKeyNotFound only when the ID had neither a key nor a vault entry
+	// (decision V10): a token never used as a subject has only the latter.
+	if keyErr != nil && !hadEntry {
+		return keyErr
+	}
+	return nil
+}
+
+// forgetVaultEntry applies Forget to the ID's vault entry, if the protector
+// has a token engine and the ID is a token. Graceful mode hides the entry and
+// removes its index entry, so the value no longer finds the token and the
+// same person tokenized again gets a new one (decision V3); the sealed value
+// stays for Recover until the janitor's EraseForgotten. Immediate mode erases
+// it at once.
+func (p *protector) forgetVaultEntry(ctx context.Context, token string) (bool, error) {
+	if p.TokenEngine == nil {
+		return false, nil
+	}
+	var err error
+	if p.GracefulMode {
+		err = p.TokenEngine.Forget(ctx, p.namespace, token, time.Now())
+	} else {
+		err = p.TokenEngine.Erase(ctx, p.namespace, token)
+	}
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, core.ErrTokenNotFound):
+		return false, nil
+	default:
+		return false, err
+	}
 }
 
 // Recover implements Protector.
@@ -513,8 +593,42 @@ func (p *protector) Recover(ctx context.Context, subID string) (err error) {
 		}
 	}()
 
-	err = p.KeyEngine.ReEnableKey(ctx, p.namespace, subID)
-	return
+	if err = checkSubjectID(subID); err != nil {
+		return
+	}
+
+	keyErr := p.KeyEngine.ReEnableKey(ctx, p.namespace, subID)
+	if keyErr != nil && !errors.Is(keyErr, core.ErrKeyNotFound) {
+		return keyErr
+	}
+
+	restored, err := p.restoreVaultEntry(ctx, subID)
+	if err != nil {
+		return err
+	}
+	if keyErr != nil && !restored {
+		return keyErr
+	}
+	return nil
+}
+
+// restoreVaultEntry makes a forgotten vault entry active again. Its index entry
+// is recreated unless a newer token took the value meanwhile; the old data is
+// then recovered and the value stays with the newer token (decision V11). An
+// erased entry cannot come back.
+func (p *protector) restoreVaultEntry(ctx context.Context, token string) (bool, error) {
+	if p.TokenEngine == nil {
+		return false, nil
+	}
+	_, err := p.TokenEngine.Restore(ctx, p.namespace, token)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, core.ErrTokenNotFound), errors.Is(err, core.ErrTokenErased):
+		return false, nil
+	default:
+		return false, err
+	}
 }
 
 // keyRing holds the keys fetched for one Encrypt or Decrypt call and the
@@ -580,7 +694,8 @@ func (p *protector) encryptKeyRing(ctx context.Context, structSubjects, valueSub
 func collectValueSubjects(structs []sensitive.Struct) ([]string, error) {
 	subjects := make([]string, 0)
 	collect := func(_ sensitive.FieldReplace, val string) (string, error) {
-		if wv, err := parseWireValue(val); err == nil {
+		// A reserved subject is never fetched: openValue refuses it.
+		if wv, err := parseWireValue(val); err == nil && !isReservedID(wv.subjectID) {
 			subjects = append(subjects, wv.subjectID)
 		}
 		return val, nil
@@ -605,6 +720,9 @@ func (p *protector) openValue(fr sensitive.FieldReplace, wv wireValue, ring keyR
 	}
 	if wv.keyVersion != subjectKeyVersion {
 		return nil, "", fmt.Errorf("%w: unsupported key version %d at %s", ErrInvalidWireFormat, wv.keyVersion, fr.Path)
+	}
+	if isReservedID(wv.subjectID) {
+		return nil, "", fmt.Errorf("%w at %s", ErrReservedSubjectID, fr.Path)
 	}
 
 	key, state := ring.lookup(wv.subjectID)
@@ -701,44 +819,7 @@ func (p *protector) Clear(ctx context.Context, force bool) (err error) {
 		}
 	}
 
-	if cp, ok := p.TokenEngine.(core.TokenEngineCache); ok {
-		if e := cp.ClearCache(ctx, p.namespace, force); e != nil {
-			err = errors.Join(err, e)
-		}
-	}
-
 	return
-}
-
-// Detokenize implements Protector.
-func (p *protector) Detokenize(ctx context.Context, tokens []string) (core.TokenValueMap, error) {
-	if p.TokenEngine == nil {
-		return nil, core.ErrTokenEngineNotConfigured
-	}
-	return p.TokenEngine.Detokenize(ctx, p.namespace, tokens)
-}
-
-// Tokenize implements Protector.
-func (p *protector) Tokenize(ctx context.Context, values []core.TokenData, opts ...func(*core.TokenizeConfig)) (core.ValueTokenMap, error) {
-	if p.TokenEngine == nil {
-		return nil, core.ErrTokenEngineNotConfigured
-	}
-	return p.TokenEngine.Tokenize(ctx, p.namespace, values, opts...)
-}
-
-func (p *protector) DeleteToken(ctx context.Context, token string) error {
-	if p.TokenEngine == nil {
-		return core.ErrTokenEngineNotConfigured
-	}
-	return p.TokenEngine.DeleteToken(ctx, p.namespace, token)
-}
-
-// ListTokens implements Protector.
-func (p *protector) ListTokens(ctx context.Context, query core.ListTokensQuery) (result *core.ListTokensResult, err error) {
-	if p.TokenEngine == nil {
-		return nil, core.ErrTokenEngineNotConfigured
-	}
-	return p.TokenEngine.ListTokens(ctx, p.namespace, query)
 }
 
 // Purge implements Protector.

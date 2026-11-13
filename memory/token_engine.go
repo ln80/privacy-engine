@@ -1,279 +1,233 @@
 package memory
 
 import (
+	"bytes"
 	"context"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/ln80/privacy-engine/core"
 )
 
+// TokenEngine is an in-memory core.TokenEngine, mainly for tests. It stores
+// opaque records and index entries, never values.
 type TokenEngine struct {
-	origin core.TokenEngine
-
-	cache map[string]*tokenCache
-	mu    sync.RWMutex
-	ttl   time.Duration
-}
-
-// ListTokens implements core.TokenEngine.
-func (t *TokenEngine) ListTokens(ctx context.Context, namespace string, query core.ListTokensQuery) (result *core.ListTokensResult, err error) {
-	cache := t.cacheOf(namespace)
-
-	// Get all token records from the cache
-	records := cache.getAllRecords()
-
-	return &core.ListTokensResult{
-		Tokens: records,
-	}, nil
+	mu sync.Mutex
+	ns map[string]*vault
 }
 
 var _ core.TokenEngine = &TokenEngine{}
-var _ core.TokenEngineCache = &TokenEngine{}
 
+type vault struct {
+	records map[string]core.VaultRecord // by token
+	index   map[string]string           // string(index) -> token
+}
+
+// NewTokenEngine returns an empty in-memory token vault.
 func NewTokenEngine() *TokenEngine {
-	return &TokenEngine{
-		cache: make(map[string]*tokenCache),
+	return &TokenEngine{ns: make(map[string]*vault)}
+}
+
+// vaultOf returns the namespace's vault, creating it. Caller holds t.mu.
+func (t *TokenEngine) vaultOf(namespace string) *vault {
+	v, ok := t.ns[namespace]
+	if !ok {
+		v = &vault{records: map[string]core.VaultRecord{}, index: map[string]string{}}
+		t.ns[namespace] = v
+	}
+	return v
+}
+
+func cloneRecord(r core.VaultRecord) core.VaultRecord {
+	r.Index = bytes.Clone(r.Index)
+	r.Sealed = bytes.Clone(r.Sealed)
+	return r
+}
+
+// unindex removes the record's index entry if it still points to it.
+func (v *vault) unindex(r core.VaultRecord) {
+	if v.index[string(r.Index)] == r.Token {
+		delete(v.index, string(r.Index))
 	}
 }
 
-func NewTokenCacheWrapper(origin core.TokenEngine, ttl time.Duration) *TokenEngine {
-	if origin == nil {
-		panic("invalid origin Token Engine, nil value found")
+// LookupIndex implements core.TokenEngine.
+func (t *TokenEngine) LookupIndex(ctx context.Context, namespace string, indexes [][]byte) (map[string]string, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	v := t.vaultOf(namespace)
+	out := make(map[string]string, len(indexes))
+	for _, idx := range indexes {
+		if tok, ok := v.index[string(idx)]; ok {
+			out[string(idx)] = tok
+		}
 	}
-	if ttl == 0 {
-		ttl = cacheTTLDefault
-	}
-
-	return &TokenEngine{
-		origin: origin,
-		cache:  map[string]*tokenCache{},
-		ttl:    ttl,
-	}
+	return out, nil
 }
 
-// Detokenize implements core.TokenEngine.
-func (t *TokenEngine) Detokenize(ctx context.Context, namespace string, tokens []string) (core.TokenValueMap, error) {
-	cache := t.cacheOf(namespace)
-
-	foundTokens := make(core.TokenValueMap)
-	missedTokens := []string{}
-	for _, token := range tokens {
-		if v, ok := cache.value(token); ok {
-			foundTokens[token] = core.TokenRecord{Token: token, Value: v}
-		} else {
-			missedTokens = append(missedTokens, token)
+// GetRecords implements core.TokenEngine.
+func (t *TokenEngine) GetRecords(ctx context.Context, namespace string, tokens []string) (map[string]core.VaultRecord, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	v := t.vaultOf(namespace)
+	out := make(map[string]core.VaultRecord, len(tokens))
+	for _, tok := range tokens {
+		if r, ok := v.records[tok]; ok {
+			out[tok] = cloneRecord(r)
 		}
 	}
-
-	if t.origin == nil {
-		return foundTokens, nil
-	}
-
-	tokenValues, err := t.origin.Detokenize(ctx, namespace, missedTokens)
-	if err != nil {
-		return nil, err
-	}
-	for _, tokenValue := range tokenValues {
-		cache.add(tokenValue)
-		foundTokens[tokenValue.Token] = tokenValue
-	}
-	return foundTokens, nil
+	return out, nil
 }
 
-// Tokenize implements core.TokenEngine.
-func (t *TokenEngine) Tokenize(ctx context.Context, namespace string, values []core.TokenData, opts ...func(*core.TokenizeConfig)) (records core.ValueTokenMap, err error) {
-	cache := t.cacheOf(namespace)
-
-	foundValues := make(core.ValueTokenMap)
-	missedValues := []core.TokenData{}
-	for _, value := range values {
-		if token, ok := cache.token(value); ok {
-			foundValues[value] = core.TokenRecord{Token: token, Value: value}
-		} else {
-			missedValues = append(missedValues, value)
-		}
+// Insert implements core.TokenEngine.
+func (t *TokenEngine) Insert(ctx context.Context, namespace string, record core.VaultRecord) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	v := t.vaultOf(namespace)
+	if _, ok := v.records[record.Token]; ok {
+		return core.ErrTokenExists
 	}
-
-	if t.origin == nil {
-		cfg := core.TokenizeConfig{
-			TokenGenFunc: core.DefaultTokenGen,
-		}
-		for _, opt := range opts {
-			if opt == nil {
-				continue
-			}
-			opt(&cfg)
-		}
-		if cfg.TokenGenFunc == nil {
-			return nil, core.ErrTokenGenFuncNotFound
-		}
-
-		for _, value := range missedValues {
-			newToken, err := cfg.TokenGenFunc(ctx, namespace, value)
-			if err != nil {
-				return nil, err
-			}
-			// Same rule as the DynamoDB engine: the prefix goes before the
-			// generated token (PE-16).
-			newToken = cfg.Prefix + newToken
-			record := core.TokenRecord{
-				Token: newToken,
-				Value: value,
-			}
-			cache.add(record)
-			foundValues[value] = record
-		}
-		return foundValues, nil
+	if tok, ok := v.index[string(record.Index)]; ok {
+		return &core.IndexTakenError{Token: tok}
 	}
-
-	valueTokens, err := t.origin.Tokenize(ctx, namespace, missedValues, opts...)
-	if err != nil {
-		return nil, err
-	}
-	for _, tokenValue := range valueTokens {
-		cache.add(tokenValue)
-		foundValues[tokenValue.Value] = tokenValue
-	}
-	return foundValues, nil
+	record = cloneRecord(record)
+	record.State = core.TokenActive
+	record.ForgottenAt = 0
+	v.records[record.Token] = record
+	v.index[string(record.Index)] = record.Token
+	return nil
 }
 
+// Forget implements core.TokenEngine.
+func (t *TokenEngine) Forget(ctx context.Context, namespace, token string, at time.Time) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	v := t.vaultOf(namespace)
+	r, ok := v.records[token]
+	if !ok {
+		return core.ErrTokenNotFound
+	}
+	if r.State != core.TokenActive {
+		return nil
+	}
+	v.unindex(r)
+	r.State = core.TokenForgotten
+	r.ForgottenAt = at.Unix()
+	v.records[token] = r
+	return nil
+}
+
+// Restore implements core.TokenEngine.
+func (t *TokenEngine) Restore(ctx context.Context, namespace, token string) (bool, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	v := t.vaultOf(namespace)
+	r, ok := v.records[token]
+	switch {
+	case !ok:
+		return false, core.ErrTokenNotFound
+	case r.State == core.TokenErased:
+		return false, core.ErrTokenErased
+	case r.State == core.TokenActive:
+		return false, nil
+	}
+	r.State = core.TokenActive
+	r.ForgottenAt = 0
+	v.records[token] = r
+	if _, taken := v.index[string(r.Index)]; taken {
+		return false, nil
+	}
+	v.index[string(r.Index)] = token
+	return true, nil
+}
+
+// Erase implements core.TokenEngine.
+func (t *TokenEngine) Erase(ctx context.Context, namespace, token string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	v := t.vaultOf(namespace)
+	r, ok := v.records[token]
+	if !ok {
+		return core.ErrTokenNotFound
+	}
+	v.erase(r)
+	return nil
+}
+
+// erase removes the sealed value and the index entry. Caller holds t.mu.
+func (v *vault) erase(r core.VaultRecord) {
+	v.unindex(r)
+	clear(r.Sealed)
+	r.Sealed = nil
+	r.State = core.TokenErased
+	v.records[r.Token] = r
+}
+
+// EraseForgotten implements core.TokenEngine.
+func (t *TokenEngine) EraseForgotten(ctx context.Context, namespace string, before time.Time) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	v := t.vaultOf(namespace)
+	n := 0
+	for _, r := range v.records {
+		if r.State == core.TokenForgotten && r.ForgottenAt < before.Unix() {
+			v.erase(r)
+			n++
+		}
+	}
+	return n, nil
+}
+
+// DeleteToken implements core.TokenEngine.
 func (t *TokenEngine) DeleteToken(ctx context.Context, namespace string, token string) error {
-	cache := t.cacheOf(namespace)
-	if t.origin != nil {
-		if err := t.origin.DeleteToken(ctx, namespace, token); err != nil {
-			return err
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	v := t.vaultOf(namespace)
+	if r, ok := v.records[token]; ok {
+		v.unindex(r)
+		clear(r.Sealed)
+		delete(v.records, token)
+	}
+	return nil
+}
+
+// ListTokens implements core.TokenEngine.
+func (t *TokenEngine) ListTokens(ctx context.Context, namespace string, query core.ListTokensQuery) (*core.ListRecordsResult, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	v := t.vaultOf(namespace)
+
+	tokens := make([]string, 0, len(v.records))
+	for tok := range v.records {
+		if strings.HasPrefix(tok, query.Prefix) && (query.Cursor == nil || tok > *query.Cursor) {
+			tokens = append(tokens, tok)
 		}
 	}
-	return cache.delete(token)
+	slices.Sort(tokens)
+
+	res := &core.ListRecordsResult{Records: []core.VaultRecord{}}
+	if query.Limit > 0 && len(tokens) > query.Limit {
+		tokens = tokens[:query.Limit]
+		last := tokens[len(tokens)-1]
+		res.Cursor = &last
+	}
+	for _, tok := range tokens {
+		res.Records = append(res.Records, cloneRecord(v.records[tok]))
+	}
+	return res, nil
 }
 
 // PurgeNamespace implements core.TokenEngine.
 func (t *TokenEngine) PurgeNamespace(ctx context.Context, namespace string) error {
-	if t.origin != nil {
-		if err := t.origin.PurgeNamespace(ctx, namespace); err != nil {
-			return err
-		}
-	}
-
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	delete(t.cache, namespace)
-	return nil
-}
-
-// ClearCache implements core.TokenEngineCache.
-//
-// Without an origin the engine is the store, not a cache: clearing would
-// delete the only copy of every token (PE-15). It is then a no-op, forced or
-// not, as for the in-memory key engine.
-func (t *TokenEngine) ClearCache(ctx context.Context, namespace string, force bool) error {
-	if t.origin == nil {
-		return nil
-	}
-	cache := t.cacheOf(namespace)
-	return cache.clear(t.ttl, force)
-}
-
-func (e *TokenEngine) cacheOf(namespace string) *tokenCache {
-	e.mu.RLock()
-	if tc, ok := e.cache[namespace]; ok {
-		e.mu.RUnlock()
-		return tc
-	}
-	e.mu.RUnlock()
-
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if _, ok := e.cache[namespace]; !ok {
-		e.cache[namespace] = newTokenCache(namespace)
-	}
-	return e.cache[namespace]
-}
-
-type tokenCacheEntry struct {
-	core.TokenRecord
-	At int64
-}
-
-type tokenCache struct {
-	namespace    string
-	tokenToValue map[string]tokenCacheEntry
-	valueToToken map[core.TokenData]tokenCacheEntry
-	mutex        sync.RWMutex
-}
-
-func newTokenCache(namespace string) *tokenCache {
-	return &tokenCache{
-		namespace:    namespace,
-		tokenToValue: make(map[string]tokenCacheEntry),
-		valueToToken: make(map[core.TokenData]tokenCacheEntry),
-	}
-}
-
-func (tc *tokenCache) value(token string) (core.TokenData, bool) {
-	tc.mutex.RLock()
-	defer tc.mutex.RUnlock()
-
-	entry, ok := tc.tokenToValue[token]
-	return entry.Value, ok
-}
-
-func (tc *tokenCache) token(value core.TokenData) (string, bool) {
-	tc.mutex.RLock()
-	defer tc.mutex.RUnlock()
-
-	entry, ok := tc.valueToToken[value]
-	return entry.Token, ok
-}
-
-func (tc *tokenCache) add(record core.TokenRecord) {
-	tc.mutex.Lock()
-	defer tc.mutex.Unlock()
-
-	entry := tokenCacheEntry{
-		TokenRecord: record,
-		At:          time.Now().Unix(),
-	}
-	tc.tokenToValue[record.Token] = entry
-	tc.valueToToken[record.Value] = entry
-}
-
-func (tc *tokenCache) clear(ttl time.Duration, force bool) error {
-	tc.mutex.Lock()
-	defer tc.mutex.Unlock()
-
-	for token, entry := range tc.tokenToValue {
-		if expired := entry.At+int64(ttl.Seconds()) < time.Now().Unix(); expired || force {
-			delete(tc.tokenToValue, token)
-			delete(tc.valueToToken, entry.Value)
+	if v, ok := t.ns[namespace]; ok {
+		for _, r := range v.records {
+			clear(r.Sealed)
 		}
 	}
+	delete(t.ns, namespace)
 	return nil
-}
-
-func (tc *tokenCache) delete(token string) error {
-	tc.mutex.Lock()
-	defer tc.mutex.Unlock()
-
-	entry, exists := tc.tokenToValue[token]
-	if !exists {
-		return nil
-	}
-
-	// Delete from both maps
-	delete(tc.tokenToValue, token)
-	delete(tc.valueToToken, entry.Value)
-	return nil
-}
-
-func (tc *tokenCache) getAllRecords() []core.TokenRecord {
-	tc.mutex.RLock()
-	defer tc.mutex.RUnlock()
-
-	records := []core.TokenRecord{}
-	for _, entry := range tc.tokenToValue {
-		records = append(records, entry.TokenRecord)
-	}
-	return records
 }

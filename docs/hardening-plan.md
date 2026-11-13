@@ -28,6 +28,8 @@ The single place to see where the audit work stands, across the three repos. Det
 | – | Subject ID stays in field values; subject IDs must be pseudonymous (PE-06 as a rule) |
 | – | No field subkey; field AAD binds namespace + header only; PE-11 accepted as a documented risk |
 | – | After `PurgeNamespace`, keys report `Unknown`, so decrypting a purged tenant's data is an error, not a placeholder |
+| E1–E5 | elastic: Forget of an unknown subject is `ErrKeyNotFound`; default KMS context `{v, ns, sid}`, pluggable; tombstones kept; v0.7.0 numbering; `dynamodb` and `kms` stay independent (see elastic `docs/hardening-plan.md`) |
+| V1–V12 | Token vault v2, revision 2 (elastic `docs/token-vault-v2.md`): one table, one `@vault` key with derived keys, KMS optional, a new token after Forget, forgotten tokens listed by state, `@` reserved |
 
 ## Phase 1: privacy-engine (`fix/audit-hardening`)
 
@@ -49,6 +51,8 @@ The single place to see where the audit work stands, across the three repos. Det
 | Keys and token data redact in fmt, slog and JSON | PE-09 | Done |
 | In-memory token store survives `Clear` | PE-15 | Done |
 | In-memory store honours `WithPrefix` | PE-16 | Done |
+| Token vault v2, core (branch `feat/token-vault-v2`): crypto, reserved `@` IDs, opaque storage contract and in-memory store, protector flows, `Forget`/`Recover` lifecycle, conformance suite. Release v0.8.0 | PE-25, 27, 28, 29, 30 | Done on branch |
+| Follow-up: `TestFactory` waits 10 ms after a 100 ms ticker and failed once under full parallel load; poll instead of sleeping | – | |
 | Then, before the external audit | tests (section 3), API cleanup (section 2), hygiene and security docs (sections 5–6), caches PE-20/21, PE-12, PE-14 | |
 
 Vault findings PE-25 to PE-30 move to elastic as PX-18 to PX-23.

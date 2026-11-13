@@ -130,14 +130,14 @@ func TestRedactKeepsExplicitAccess(t *testing.T) {
 
 func TestValueTokenMapJSONIsAListOfRecords(t *testing.T) {
 	m := ValueTokenMap{
-		"bob@example.org": {Token: "t2", Value: "bob@example.org"},
-		secretData:        {Token: "t1", Value: secretData},
+		"bob@example.org": {Token: "t2", Value: "bob@example.org", State: TokenActive},
+		secretData:        {Token: "t1", Value: secretData, State: TokenActive},
 	}
 	out, err := json.Marshal(m)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `[{"Token":"t1","Value":"**TOKEN DATA**"},{"Token":"t2","Value":"**TOKEN DATA**"}]`
+	want := `[{"Token":"t1","Value":"**TOKEN DATA**","State":"ACTIVE"},{"Token":"t2","Value":"**TOKEN DATA**","State":"ACTIVE"}]`
 	if string(out) != want {
 		t.Fatalf("expect %s, got %s", want, out)
 	}

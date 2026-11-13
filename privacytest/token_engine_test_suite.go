@@ -1,10 +1,14 @@
 package privacytest
 
 import (
+	"bytes"
 	"context"
-	"reflect"
-	"strings"
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/ln80/privacy-engine/core"
 )
@@ -13,130 +17,251 @@ type TokenEngineTestConfig struct {
 	Namespace string
 }
 
+func randomBytes(n int) []byte {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	return b
+}
+
+// newRecord returns an active record with random opaque index and sealed
+// bytes, as the protector would produce them.
+func newRecord(token string) core.VaultRecord {
+	return core.VaultRecord{
+		Token:     token,
+		Index:     randomBytes(32),
+		Sealed:    randomBytes(48),
+		State:     core.TokenActive,
+		CreatedAt: time.Now().Unix(),
+	}
+}
+
+// RunTokenEngineTest is the conformance suite of core.TokenEngine: the opaque
+// storage of token vault v2. Every backend must pass it.
 func RunTokenEngineTest(t *testing.T, ctx context.Context, eng core.TokenEngine, opts ...func(*TokenEngineTestConfig)) {
+	t.Helper()
 	cfg := &TokenEngineTestConfig{}
 	for _, opt := range opts {
-		if opt == nil {
-			continue
+		if opt != nil {
+			opt(cfg)
 		}
-		opt(cfg)
 	}
-	namespace := "tenant-dcm30oI"
+	ns := "tenant-dcm30oI"
 	if cfg.Namespace != "" {
-		namespace = cfg.Namespace
+		ns = cfg.Namespace
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("expect err be nil, got: %v", err)
+		}
+	}
+	state := func(token string) core.TokenState {
+		t.Helper()
+		got, err := eng.GetRecords(ctx, ns, []string{token})
+		must(err)
+		r, ok := got[token]
+		if !ok {
+			return ""
+		}
+		return r.State
+	}
+	indexOf := func(idx []byte) string {
+		t.Helper()
+		got, err := eng.LookupIndex(ctx, ns, [][]byte{idx})
+		must(err)
+		return got[string(idx)]
 	}
 
-	values := []core.TokenData{
-		core.TokenData(randomID()),
-		core.TokenData(randomID()),
-		core.TokenData(randomID()),
+	// Insert, then read back through both lookups.
+	a, b := newRecord("tok-a-"+randomID()), newRecord("tok-b-"+randomID())
+	must(eng.Insert(ctx, ns, a))
+	must(eng.Insert(ctx, ns, b))
+	idx, err := eng.LookupIndex(ctx, ns, [][]byte{a.Index, b.Index, randomBytes(32)})
+	must(err)
+	if len(idx) != 2 || idx[string(a.Index)] != a.Token || idx[string(b.Index)] != b.Token {
+		t.Fatalf("LookupIndex: got %v", idx)
+	}
+	recs, err := eng.GetRecords(ctx, ns, []string{a.Token, b.Token, "unknown"})
+	must(err)
+	if len(recs) != 2 {
+		t.Fatalf("GetRecords: got %d records, want 2 (unknown omitted)", len(recs))
+	}
+	if r := recs[a.Token]; !bytes.Equal(r.Index, a.Index) || !bytes.Equal(r.Sealed, a.Sealed) || r.State != core.TokenActive {
+		t.Fatalf("GetRecords: record differs: %+v", r)
 	}
 
-	tokens_1, err := eng.Tokenize(ctx, namespace, values)
-	if err != nil {
-		t.Fatalf("expect err be nil, got: %v", err)
-	}
-	if got, want := len(tokens_1), 3; got != want {
-		t.Fatalf("expect result map length be %d, got %d", want, got)
-	}
-
-	// assert idempotency
-	tokens_2, err := eng.Tokenize(ctx, namespace, values)
-	if err != nil {
-		t.Fatalf("expect err be nil, got: %v", err)
-	}
-	if want, got := tokens_1, tokens_2; !reflect.DeepEqual(want, got) {
-		t.Fatalf("expect %v, %v be equals", want, got)
+	// Returned records are copies.
+	recs[a.Token].Sealed[0] ^= 0xff
+	again, err := eng.GetRecords(ctx, ns, []string{a.Token})
+	must(err)
+	if !bytes.Equal(again[a.Token].Sealed, a.Sealed) {
+		t.Fatal("mutating a returned record changed the stored one")
 	}
 
-	result_3, err := eng.Detokenize(ctx, namespace, tokens_1.Tokens())
-	if err != nil {
-		t.Fatalf("expect err be nil, got: %v", err)
+	// Collision: the token exists. Nothing is written for the second record.
+	dup := newRecord(a.Token)
+	if err := eng.Insert(ctx, ns, dup); !errors.Is(err, core.ErrTokenExists) {
+		t.Fatalf("Insert existing token: expect ErrTokenExists, got %v", err)
 	}
-	values_3 := result_3.Values()
-
-	// assert detokenized values are the same as original
-	if want, got := values, values_3; !keysEqual(want, got) {
-		t.Fatalf("expect %v, %v be equals", want, got)
+	if indexOf(dup.Index) != "" {
+		t.Fatal("a failed Insert wrote its index entry")
 	}
 
-	var tokenToDelete core.TokenRecord
-	for _, token := range tokens_1 {
-		tokenToDelete = token
-		break
+	// Taken index: another Tokenize of the same value won.
+	race := newRecord("tok-race-" + randomID())
+	race.Index = bytes.Clone(a.Index)
+	var taken *core.IndexTakenError
+	if err := eng.Insert(ctx, ns, race); !errors.As(err, &taken) || taken.Token != a.Token {
+		t.Fatalf("Insert taken index: expect IndexTakenError{%s}, got %v", a.Token, err)
 	}
-	if err := eng.DeleteToken(ctx, namespace, tokenToDelete.Token); err != nil {
-		t.Fatalf("expect err be nil, got: %v", err)
-	}
-
-	// assert tokenize a deleted token returns a new fresh one.
-	result_4, err := eng.Tokenize(ctx, namespace, values)
-	if err != nil {
-		t.Fatalf("expect err be nil, got: %v", err)
-	}
-	if want, got := tokens_1, result_4; reflect.DeepEqual(want, got) {
-		t.Fatalf("expect %v, %v not be equals", want, got)
+	if state(race.Token) != "" {
+		t.Fatal("a failed Insert wrote its record")
 	}
 
-	// PurgeNamespace: create tokens in a sibling namespace, purge the primary,
-	// assert sibling intact, primary empty, and purge is idempotent.
-	otherNS := namespace + "-other"
-	otherTokens, err := eng.Tokenize(ctx, otherNS, values)
-	if err != nil {
-		t.Fatalf("expect err be nil, got: %v", err)
+	// Forget: hidden from its index, kept sealed, first time kept.
+	t1 := time.Unix(time.Now().Unix()-100, 0)
+	must(eng.Forget(ctx, ns, a.Token, t1))
+	must(eng.Forget(ctx, ns, a.Token, t1.Add(50*time.Second)))
+	r, err := eng.GetRecords(ctx, ns, []string{a.Token})
+	must(err)
+	if r[a.Token].State != core.TokenForgotten || r[a.Token].ForgottenAt != t1.Unix() || !bytes.Equal(r[a.Token].Sealed, a.Sealed) {
+		t.Fatalf("Forget: got %+v", r[a.Token])
 	}
-	if got, want := len(otherTokens), 3; got != want {
-		t.Fatalf("expect result map length be %d, got %d", want, got)
+	if indexOf(a.Index) != "" {
+		t.Fatal("Forget left the index entry")
 	}
-
-	if err := eng.PurgeNamespace(ctx, namespace); err != nil {
-		t.Fatalf("expect err be nil, got: %v", err)
-	}
-	if err := eng.PurgeNamespace(ctx, namespace); err != nil {
-		t.Fatalf("expect err be nil, got: %v", err)
+	if err := eng.Forget(ctx, ns, "unknown", t1); !errors.Is(err, core.ErrTokenNotFound) {
+		t.Fatalf("Forget unknown: expect ErrTokenNotFound, got %v", err)
 	}
 
-	listed, err := eng.ListTokens(ctx, namespace, core.ListTokensQuery{})
-	if err != nil {
-		t.Fatalf("expect err be nil, got: %v", err)
+	// Restore with a free index: reindexed.
+	reindexed, err := eng.Restore(ctx, ns, a.Token)
+	must(err)
+	if !reindexed || state(a.Token) != core.TokenActive || indexOf(a.Index) != a.Token {
+		t.Fatalf("Restore: reindexed=%v state=%s index=%q", reindexed, state(a.Token), indexOf(a.Index))
 	}
-	if got, want := len(listed.Tokens), 0; got != want {
-		t.Fatalf("expect %d tokens after purge, got %d", want, got)
-	}
-
-	otherListed, err := eng.ListTokens(ctx, otherNS, core.ListTokensQuery{})
-	if err != nil {
-		t.Fatalf("expect err be nil, got: %v", err)
-	}
-	if got, want := len(otherListed.Tokens), 3; got != want {
-		t.Fatalf("expect sibling namespace keep %d tokens, got %d", want, got)
+	if reindexed, err := eng.Restore(ctx, ns, a.Token); err != nil || reindexed {
+		t.Fatalf("Restore active: expect (false, nil), got (%v, %v)", reindexed, err)
 	}
 
-	// Fresh tokens can be created after purge
-	fresh, err := eng.Tokenize(ctx, namespace, values[:1])
-	if err != nil {
-		t.Fatalf("expect err be nil, got: %v", err)
+	// Restore after the value was given to a newer token: active, not reindexed.
+	must(eng.Forget(ctx, ns, a.Token, t1))
+	newer := newRecord("tok-newer-" + randomID())
+	newer.Index = bytes.Clone(a.Index)
+	must(eng.Insert(ctx, ns, newer))
+	reindexed, err = eng.Restore(ctx, ns, a.Token)
+	must(err)
+	if reindexed || state(a.Token) != core.TokenActive || indexOf(a.Index) != newer.Token {
+		t.Fatalf("Restore taken: reindexed=%v state=%s index=%q", reindexed, state(a.Token), indexOf(a.Index))
 	}
-	if got, want := len(fresh), 1; got != want {
-		t.Fatalf("expect result map length be %d, got %d", want, got)
+	if _, err := eng.Restore(ctx, ns, "unknown"); !errors.Is(err, core.ErrTokenNotFound) {
+		t.Fatalf("Restore unknown: expect ErrTokenNotFound, got %v", err)
 	}
 
-	// WithPrefix (PE-16): a new token starts with the prefix; an existing
-	// value keeps the token it already has.
-	prefixed := core.TokenData(randomID())
-	withPrefix := func(c *core.TokenizeConfig) { c.Prefix = "sub_" }
-	tokens, err := eng.Tokenize(ctx, namespace, []core.TokenData{prefixed}, withPrefix)
-	if err != nil {
-		t.Fatalf("expect err be nil, got: %v", err)
+	// Erase: sealed value gone, index entry gone only if it pointed here.
+	must(eng.Erase(ctx, ns, a.Token)) // a does not hold its index any more
+	must(eng.Erase(ctx, ns, a.Token))
+	r, err = eng.GetRecords(ctx, ns, []string{a.Token})
+	must(err)
+	if r[a.Token].State != core.TokenErased || len(r[a.Token].Sealed) != 0 {
+		t.Fatalf("Erase: got %+v", r[a.Token])
 	}
-	if token := tokens.Get(string(prefixed)).Token; !strings.HasPrefix(token, "sub_") || len(token) <= len("sub_") {
-		t.Fatalf("expect a token starting with %q, got %q", "sub_", token)
+	if indexOf(a.Index) != newer.Token {
+		t.Fatal("Erase removed an index entry that pointed to another token")
 	}
-	again, err := eng.Tokenize(ctx, namespace, []core.TokenData{prefixed}, withPrefix)
-	if err != nil {
-		t.Fatalf("expect err be nil, got: %v", err)
+	if _, err := eng.Restore(ctx, ns, a.Token); !errors.Is(err, core.ErrTokenErased) {
+		t.Fatalf("Restore erased: expect ErrTokenErased, got %v", err)
 	}
-	if again.Get(string(prefixed)).Token != tokens.Get(string(prefixed)).Token {
-		t.Fatalf("expect the same token on a second Tokenize")
+	must(eng.Forget(ctx, ns, a.Token, t1)) // no-op on an erased record
+	if state(a.Token) != core.TokenErased {
+		t.Fatal("Forget changed an erased record")
 	}
+	must(eng.Erase(ctx, ns, b.Token)) // b holds its index
+	if indexOf(b.Index) != "" {
+		t.Fatal("Erase left the record's own index entry")
+	}
+	if err := eng.Erase(ctx, ns, "unknown"); !errors.Is(err, core.ErrTokenNotFound) {
+		t.Fatalf("Erase unknown: expect ErrTokenNotFound, got %v", err)
+	}
+
+	// EraseForgotten: only records forgotten strictly before the cutoff.
+	old, recent := newRecord("tok-old-"+randomID()), newRecord("tok-recent-"+randomID())
+	must(eng.Insert(ctx, ns, old))
+	must(eng.Insert(ctx, ns, recent))
+	now := time.Now()
+	must(eng.Forget(ctx, ns, old.Token, now.Add(-2*time.Hour)))
+	must(eng.Forget(ctx, ns, recent.Token, now))
+	n, err := eng.EraseForgotten(ctx, ns, now.Add(-time.Hour))
+	must(err)
+	if n != 1 || state(old.Token) != core.TokenErased || state(recent.Token) != core.TokenForgotten {
+		t.Fatalf("EraseForgotten: erased %d, old=%s recent=%s", n, state(old.Token), state(recent.Token))
+	}
+
+	// DeleteToken: record and own index entry gone; unknown is a no-op.
+	must(eng.DeleteToken(ctx, ns, newer.Token))
+	if state(newer.Token) != "" || indexOf(newer.Index) != "" {
+		t.Fatal("DeleteToken left the record or its index entry")
+	}
+	must(eng.DeleteToken(ctx, ns, "unknown"))
+	reuse := newRecord("tok-reuse-" + randomID())
+	reuse.Index = bytes.Clone(newer.Index)
+	must(eng.Insert(ctx, ns, reuse)) // the value can be tokenized again
+
+	// ListTokens: prefix, token order, states, and paging that covers all.
+	pns := ns + "-list"
+	var listed []string
+	for i := range 7 {
+		rec := newRecord(fmt.Sprintf("sub_%02d", i))
+		must(eng.Insert(ctx, pns, rec))
+		listed = append(listed, rec.Token)
+	}
+	must(eng.Insert(ctx, pns, newRecord("rcp_00")))
+	must(eng.Forget(ctx, pns, "sub_03", now))
+	var got []string
+	var cursor *string
+	for pages := 0; ; pages++ {
+		if pages > 10 {
+			t.Fatal("ListTokens: paging does not end")
+		}
+		page, err := eng.ListTokens(ctx, pns, core.ListTokensQuery{Prefix: "sub_", Limit: 3, Cursor: cursor})
+		must(err)
+		if len(page.Records) > 3 {
+			t.Fatalf("ListTokens: page of %d records, limit 3", len(page.Records))
+		}
+		for _, rec := range page.Records {
+			got = append(got, rec.Token)
+			want := core.TokenActive
+			if rec.Token == "sub_03" {
+				want = core.TokenForgotten
+			}
+			if rec.State != want {
+				t.Fatalf("ListTokens: %s state %s, want %s", rec.Token, rec.State, want)
+			}
+		}
+		if page.Cursor == nil {
+			break
+		}
+		cursor = page.Cursor
+	}
+	if !slices.Equal(got, listed) {
+		t.Fatalf("ListTokens: got %v, want %v", got, listed)
+	}
+
+	// PurgeNamespace: everything gone, sibling intact, idempotent.
+	sibling := ns + "-other"
+	s := newRecord("tok-sibling-" + randomID())
+	must(eng.Insert(ctx, sibling, s))
+	must(eng.PurgeNamespace(ctx, ns))
+	must(eng.PurgeNamespace(ctx, ns))
+	all, err := eng.ListTokens(ctx, ns, core.ListTokensQuery{})
+	must(err)
+	if len(all.Records) != 0 || indexOf(reuse.Index) != "" {
+		t.Fatalf("PurgeNamespace left %d records", len(all.Records))
+	}
+	if got, err := eng.GetRecords(ctx, sibling, []string{s.Token}); err != nil || len(got) != 1 {
+		t.Fatalf("PurgeNamespace touched a sibling namespace: %v, %v", got, err)
+	}
+	must(eng.Insert(ctx, ns, newRecord("tok-after-purge-"+randomID())))
 }

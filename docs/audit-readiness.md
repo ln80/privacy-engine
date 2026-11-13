@@ -63,12 +63,12 @@ Scanners are clean: govulncheck reports 0 reachable vulnerabilities, gosec and s
 | PE-22 | Medium | Build | Uncommitted `go.sum` incomplete; local tests depend on `go.work` | Fixed |
 | PE-23 | Medium | Keys | No key versioning, so no rotation and no crypto agility | Fixed (format; rotation itself not built) |
 | PE-24 | Low | various | See "Low" list | Partly fixed |
-| PE-25 | High | Vault | Token vault stores PII in plaintext in three attributes, one of them an index key (elastic) | Open |
-| PE-26 | High | Vault | Vault, DEKs and their access policy share one table and one IAM policy (elastic) | Open |
-| PE-27 | High | Vault | Token collision returns a token that maps to someone else (elastic) | Open |
-| PE-28 | Medium | Vault | Concurrent `Tokenize` of the same value can create two tokens (elastic) | Open |
-| PE-29 | Medium | Vault | Vault values survive crypto-shredding in backups and PITR | Open |
-| PE-30 | Medium | Tokens | Custom `TokenGenFunc` receives the value, inviting hash-based tokens | Open |
+| PE-25 | High | Vault | Token vault stores PII in plaintext in three attributes, one of them an index key (elastic) | Fixed in core (vault v2); elastic storage pending |
+| PE-26 | High | Vault | Vault, DEKs and their access policy share one table and one IAM policy (elastic) | Accepted: one table by decision; values sealed |
+| PE-27 | High | Vault | Token collision returns a token that maps to someone else (elastic) | Fixed in core (vault v2); elastic storage pending |
+| PE-28 | Medium | Vault | Concurrent `Tokenize` of the same value can create two tokens (elastic) | Fixed in core (vault v2); elastic storage pending |
+| PE-29 | Medium | Vault | Vault values survive crypto-shredding in backups and PITR | Mitigated: sealed, erased on the key's timeline; backups bounded by retention |
+| PE-30 | Medium | Tokens | Custom `TokenGenFunc` receives the value, inviting hash-based tokens | Fixed |
 
 ---
 
@@ -133,7 +133,7 @@ The idempotency check `protector.go:219` skips any value matching `ENC.<v>.<b64>
 - **PE-12 Batch Encrypt/Decrypt not atomic.** If struct #3 fails, structs #1-2 are already mutated; on `Encrypt` that leaves a batch half plaintext. Encrypt into copies, commit on success.
 - **PE-13 Erasure latency.** Other processes keep serving a forgotten subject's cached key until their TTL. Acceptable, but must be documented as a bounded erasure delay, with the TTL as the bound.
 - **PE-14 `DeriveSubjectKey` escapes crypto-shredding.** If callers persist the derived key, `Forget` no longer erases data encrypted with it. Document clearly; consider an API that never returns raw derived bytes.
-- **PE-15 In-memory TokenEngine deletes its own data. Fixed:** as a store (no origin) `ClearCache` is a no-op, forced or not, as for the key engine; regression `TestTokenStoreSurvivesClearCache`. Was: `memory/token_engine.go:162` lacks the "store vs cache" guard the key engine has. PoC: with `memory.NewTokenEngine()`, a non-forced `Clear` (what `Monitor` does) deletes all tokens after ~1 s.
+- **PE-15 In-memory TokenEngine deletes its own data. Fixed, and the surface is gone with vault v2 (no token cache wrapper or ClearCache).** as a store (no origin) `ClearCache` is a no-op, forced or not, as for the key engine; regression `TestTokenStoreSurvivesClearCache`. Was: `memory/token_engine.go:162` lacks the "store vs cache" guard the key engine has. PoC: with `memory.NewTokenEngine()`, a non-forced `Clear` (what `Monitor` does) deletes all tokens after ~1 s.
 - **PE-16 `WithPrefix` ignored. Fixed:** the in-memory store prepends the prefix to the generated token, as the DynamoDB engine does; the `privacytest` token suite now checks `Prefix` for every backend. Was: by the in-memory engine (PoC: plain UUID returned), while the README and example advertise it.
 - **PE-17 Token collisions not checked.** A custom `TokenGenFunc` that collides overwrites another person's mapping, so `Detokenize` returns the wrong person's data. Check-and-retry on insert.
 - **PE-18 `ListTokens` is a bulk PII export.** It returns every value in clear, and the memory implementation ignores `Limit`, `Cursor`, `Prefix` and `SearchText` (`memory/token_engine.go:20`). Needs paging, a clearly privileged name, and an audit hook.
@@ -301,6 +301,8 @@ Short answer: the token *generation* follows the pattern well; the *vault* does 
 DynamoDB encryption at rest (`SSEEnabled: true` in `stack/basic/template.yaml`) protects against someone reading AWS's storage media. Every authorised read decrypts transparently, so it does not protect against the realistic threats: a compromised app role or credentials, an over-broad IAM policy, an admin with console access, a leaked table export, a PITR restore into another account, or DynamoDB Streams consumers. With the AWS-owned key there is also no CloudTrail record of key use and no way to revoke it. That is exactly the gap PCI DSS 3.5.1.2 closes by requiring field-level protection on top of disk encryption, and the EDPB's "technical measures" on the additional information point the same way.
 
 App-side (field-level) encryption of the vault keeps the value unreadable to everything outside the process that holds the key, including backups, exports, streams, and operators. It also lets the vault take part in crypto-shredding.
+
+**Superseded.** The agreed design is token vault v2, revision 2, in privacy-engine.elastic `docs/token-vault-v2.md`: one table, one `@vault` key per namespace with derived seal and index keys (not the subject's DEK, which brings no backup benefit when keys and vault share a table), erasure on the key's timeline, KMS optional. The core part is implemented in privacy-engine (`vault.go`, `vault_crypto.go`); the DynamoDB storage follows in elastic. The original recommendation, kept for the record:
 
 **Recommended vault design** (needs a vault format change, so it belongs to format v2):
 
