@@ -52,7 +52,9 @@ The single place to see where the audit work stands, across the three repos. Det
 | In-memory token store survives `Clear` | PE-15 | Done |
 | In-memory store honours `WithPrefix` | PE-16 | Done |
 | Token vault v2, core (branch `feat/token-vault-v2`): crypto, reserved `@` IDs, opaque storage contract and in-memory store, protector flows, `Forget`/`Recover` lifecycle, conformance suite. Release v0.8.0 | PE-25, 27, 28, 29, 30 | Done on branch |
-| Follow-up: `TestFactory` waits 10 ms after a 100 ms ticker and failed once under full parallel load; poll instead of sleeping | – | |
+| `TestFactory` polls instead of sleeping (it failed once under full parallel load) | – | Done |
+| `Forget(id, Immediately())`: immediate erasure per call, whatever `GracefulMode` | D3 | Done |
+| Conformance: unknown subjects (E1), raw-storage probes for key material and sealed values, erasure without a janitor (`ErasesWithoutJanitor`, token `GracePeriod`). Release v0.9.0 | E1, D3 | Done |
 | Then, before the external audit | tests (section 3), API cleanup (section 2), hygiene and security docs (sections 5–6), caches PE-20/21, PE-12, PE-14 | |
 
 Vault findings PE-25 to PE-30 move to elastic as PX-18 to PX-23.

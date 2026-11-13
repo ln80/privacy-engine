@@ -127,18 +127,27 @@ type KeyEngine interface {
 	GetOrCreateKeys(ctx context.Context, namespace string, keyIDs []string, keyGen KeyGen) (KeyMap, error)
 
 	// DisableKey disables the associated key of the given keyID.
-	// It returns ErrKeyNotFound error if the key is already deleted.
+	// It returns ErrKeyNotFound if the key is deleted, or if the engine never
+	// saw keyID; it then writes nothing.
 	DisableKey(ctx context.Context, namespace, keyID string) error
 
 	// ReEnableKey reenables the associated key of the given keyID.
-	// It returns ErrKeyNotFound error if the key is already deleted.
+	// It returns ErrKeyNotFound if the key is deleted, including a key
+	// disabled longer than the grace period, or if the engine never saw
+	// keyID; it then writes nothing.
 	ReEnableKey(ctx context.Context, namespace, keyID string) error
 
-	// DeleteKey deletes the associated key of the given keyID.
+	// DeleteKey deletes the key material of the given keyID and keeps a
+	// DELETED record of it. Idempotent; a keyID the engine never saw is not
+	// written.
 	DeleteKey(ctx context.Context, namespace, keyID string) error
 
 	// DeleteUnusedKeys delete unused keys which were disabled
 	// for longer or equal to the configured grace period.
+	//
+	// An engine may also delete them by itself (for example through a
+	// storage TTL). Either way, a key disabled longer than the grace period
+	// is reported DELETED and cannot be re-enabled.
 	DeleteUnusedKeys(ctx context.Context, namespace string) error
 
 	// PurgeNamespace hard-deletes every encryption key in the namespace

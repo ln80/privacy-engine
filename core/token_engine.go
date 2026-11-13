@@ -169,6 +169,11 @@ type TokenEngine interface {
 
 	// EraseForgotten erases every record forgotten strictly before the given
 	// time and returns how many it erased.
+	//
+	// An engine configured with a grace period may also erase by itself (for
+	// example through a storage TTL): a record forgotten longer than the grace
+	// period ago is then reported ERASED, with no sealed value, and cannot be
+	// restored, whether or not EraseForgotten ran.
 	EraseForgotten(ctx context.Context, namespace string, before time.Time) (erased int, err error)
 
 	// DeleteToken deletes a record and its index entry if it still points to
