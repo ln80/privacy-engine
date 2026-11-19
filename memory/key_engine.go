@@ -17,9 +17,11 @@ const (
 )
 
 type keyCache struct {
-	ID    string
-	Key   core.Key
-	At    int64
+	ID  string
+	Key core.Key
+	// At is when the cache stored the entry. A cache entry older than the
+	// TTL is not served.
+	At    time.Time
 	State core.KeyState
 }
 
@@ -27,7 +29,7 @@ func newKeyCache(id string, key core.Key) keyCache {
 	return keyCache{
 		ID:    id,
 		Key:   key,
-		At:    time.Now().Unix(),
+		At:    time.Now(),
 		State: core.StateActive,
 	}
 }
@@ -73,6 +75,10 @@ func NewKeyEngine() core.KeyEngine {
 // It requires time-to-live duration for caching purpose,
 // and it will use a default TTL duration value if the given one is Zero.
 //
+// The TTL bounds erasure latency: a key disabled or deleted through another
+// instance (or directly in the origin) is served from this cache for at most
+// the TTL, then refetched. Changes made through this wrapper apply at once.
+//
 // Encryption Keys are sensitive information and should not be kept in memory for a long period.
 // However, caching may significantly reduce costs and network overhead.
 func NewCacheWrapper(origin core.KeyEngine, ttl time.Duration) core.KeyEngine {
@@ -117,10 +123,16 @@ func (e *engine) GetKeys(ctx context.Context, namespace string, keyIDs []string)
 	foundKeys := core.NewKeyMap()
 	missing := core.KeyStates{}
 	missedKeys := []string{}
+	now := time.Now()
 
 	e.mu.RLock()
 	for _, keyID := range keyIDs {
 		key, ok := cache[keyID]
+		if ok && e.origin != nil && e.expired(key, now) {
+			// An expired entry is a miss: the origin may have disabled or
+			// deleted the key since, from this or another instance.
+			ok = false
+		}
 		switch {
 		case ok && key.State == core.StateActive:
 			foundKeys[keyID] = cloneKey(key.Key)
@@ -327,7 +339,14 @@ func (e *engine) DeleteKey(ctx context.Context, namespace, keyID string) error {
 	return nil
 }
 
-// DeleteKey implements core.KeyEngineCache
+// expired reports whether a cache entry is older than the TTL.
+func (e *engine) expired(k keyCache, now time.Time) bool {
+	return now.Sub(k.At) >= e.ttl
+}
+
+// ClearCache implements core.KeyEngineCache. It wipes the expired entries,
+// or every entry with force. Reads never serve an expired entry whether or
+// not ClearCache runs: it only frees memory sooner.
 func (e *engine) ClearCache(ctx context.Context, namespace string, force bool) error {
 	// if origin is empty then the engine acts as a store aka basic key engine.
 	// therefore silently ignore clear cache operation.
@@ -344,8 +363,9 @@ func (e *engine) ClearCache(ctx context.Context, namespace string, force bool) e
 		return nil
 	}
 
+	now := time.Now()
 	for keyID, k := range cache {
-		if expired := k.At+int64(e.ttl.Seconds()) < time.Now().Unix(); expired || force {
+		if force || e.expired(k, now) {
 			core.ZeroKey(k.Key)
 			delete(cache, keyID)
 		}

@@ -194,7 +194,7 @@ defer clearFn()
 | Option | Default | Description |
 |--------|---------|-------------|
 | `CacheEnabled` | `true` | Wrap the key engine with an in-memory TTL cache (the token engine is not cached; the vault key is cached with the other keys) |
-| `CacheTTL` | `20s` | Cache time-to-live |
+| `CacheTTL` | `20s` | Cache time-to-live. It bounds erasure latency across instances: a subject forgotten elsewhere stops decrypting here within `CacheTTL` |
 | `GracefulMode` | `true` | Disable keys before deleting (allows recovery). `Forget(id, Immediately())` overrides it for one call |
 | `Encryptor` | AES-256-GCM | Encryption algorithm |
 | `TokenEngine` | `nil` | Token engine for pseudonymization |

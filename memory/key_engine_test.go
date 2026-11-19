@@ -281,3 +281,34 @@ func TestCacheWrapperDisableReEnableFollowOrigin(t *testing.T) {
 		t.Fatalf("ReEnableKey of a deleted key: expect ErrKeyNotFound, got %v", err)
 	}
 }
+
+// A key forgotten through another instance must stop being served once the
+// cache TTL has passed, without anyone calling ClearCache: the TTL is the
+// erasure latency bound across instances.
+func TestCacheWrapperDoesNotServeExpiredKeys(t *testing.T) {
+	ctx := context.Background()
+	origin := NewKeyEngine()
+	if _, err := origin.GetOrCreateKeys(ctx, "ns", []string{"s"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	ttl := 50 * time.Millisecond
+	cache := NewCacheWrapper(origin, ttl)
+	keys, _, err := cache.GetKeys(ctx, "ns", []string{"s"})
+	if err != nil || keys["s"] == nil {
+		t.Fatalf("expect a cached key, got %v, %v", keys, err)
+	}
+
+	// Another instance forgets the subject in the origin.
+	if err := origin.DisableKey(ctx, "ns", "s"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * ttl)
+
+	keys, missing, err := cache.GetKeys(ctx, "ns", []string{"s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keys["s"] != nil || missing["s"] != core.StateDisabled {
+		t.Fatalf("expect DISABLED after TTL, got keys=%v missing=%v", keys.KeyIDs(), missing)
+	}
+}
