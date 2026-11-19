@@ -66,6 +66,7 @@ type engine struct {
 
 var _ core.KeyEngine = &engine{}
 var _ core.KeyEngineCache = &engine{}
+var _ core.GracePeriodReporter = &engine{}
 
 // NewKeyEngine returns an in-memory core.KeyEngine implementation,
 // and is mainly used for tests.
@@ -462,6 +463,15 @@ func (e *engine) PurgeNamespace(ctx context.Context, namespace string) error {
 	}
 	delete(e.cache, namespace)
 	return nil
+}
+
+// GracePeriod implements core.GracePeriodReporter: the store's own grace
+// period, or as a cache, its origin's.
+func (e *engine) GracePeriod() time.Duration {
+	if e.origin != nil {
+		return core.GracePeriodOf(e.origin)
+	}
+	return e.gracePeriod
 }
 
 // Origin implements core.KeyEngineCache
