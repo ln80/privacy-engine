@@ -312,3 +312,36 @@ func TestCacheWrapperDoesNotServeExpiredKeys(t *testing.T) {
 		t.Fatalf("expect DISABLED after TTL, got keys=%v missing=%v", keys.KeyIDs(), missing)
 	}
 }
+
+// Concurrent GetOrCreateKeys calls for a fresh subject must all return the
+// same key: a caller that lost the race used to get no key, which the
+// protector reads as a forgotten subject.
+func TestStoreGetOrCreateKeysConcurrentFreshSubject(t *testing.T) {
+	ctx := context.Background()
+	for range 200 {
+		eng := NewKeyEngine()
+		var wg sync.WaitGroup
+		got := make([]core.Key, 8)
+		for i := range got {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				keys, err := eng.GetOrCreateKeys(ctx, "ns", []string{"s"}, nil)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				got[i] = keys["s"]
+			}()
+		}
+		wg.Wait()
+		for i, k := range got {
+			if len(k) == 0 {
+				t.Fatalf("caller %d got no key for a fresh subject", i)
+			}
+			if !bytes.Equal(k, got[0]) {
+				t.Fatalf("caller %d got a different key", i)
+			}
+		}
+	}
+}

@@ -212,9 +212,13 @@ func (e *engine) GetOrCreateKeys(ctx context.Context, namespace string, keyIDs [
 
 	for _, keyID := range keyIDs {
 		if _, ok := keys[keyID]; !ok {
-			// only add new entry if key is a fresh new one.
-			// it may be disabled/deleted and still have record
-			if _, ok := cache[keyID]; ok {
+			// Only create a key for a fresh ID. Between GetKeys and this
+			// lock a concurrent call may have created it: return that key.
+			// A disabled or deleted record stays without a key.
+			if c, ok := cache[keyID]; ok {
+				if c.State == core.StateActive {
+					keys[keyID] = cloneKey(c.Key)
+				}
 				continue
 			}
 
