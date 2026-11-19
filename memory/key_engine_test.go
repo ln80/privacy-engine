@@ -16,9 +16,11 @@ func TestKeyEngine(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("in-memory engine", func(t *testing.T) {
-		eng := NewKeyEngine()
+		grace := 200 * time.Millisecond
+		eng := NewKeyEngine(func(c *core.KeyEngineConfig) { c.GracePeriod = grace })
 
 		privacytest.RunKeyEngineTest(t, ctx, eng, func(c *privacytest.KeyEngineTestConfig) {
+			c.GracePeriod = grace
 			c.KeyMaterialProbe = func(_ context.Context, ns, keyID string) (bool, error) {
 				e := eng.(*engine)
 				e.mu.Lock()
@@ -343,5 +345,51 @@ func TestStoreGetOrCreateKeysConcurrentFreshSubject(t *testing.T) {
 				t.Fatalf("caller %d got a different key", i)
 			}
 		}
+	}
+}
+
+// The store reports a key disabled longer than the grace period as DELETED
+// and refuses to re-enable it even before DeleteUnusedKeys runs, keeps the
+// first disable time, and keeps a key recoverable within the period.
+func TestStoreGracePeriodWithoutJanitor(t *testing.T) {
+	ctx := context.Background()
+	grace := 100 * time.Millisecond
+	eng := NewKeyEngine(func(c *core.KeyEngineConfig) { c.GracePeriod = grace })
+	if _, err := eng.GetOrCreateKeys(ctx, "ns", []string{"a", "b"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"a", "b"} {
+		if err := eng.DisableKey(ctx, "ns", id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Within the period: recoverable.
+	if err := eng.ReEnableKey(ctx, "ns", "a"); err != nil {
+		t.Fatalf("expect re-enable within grace period, got %v", err)
+	}
+
+	time.Sleep(grace / 2)
+	// A second disable must not restart the period.
+	if err := eng.DisableKey(ctx, "ns", "b"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(grace/2 + 10*time.Millisecond)
+
+	_, missing, err := eng.GetKeys(ctx, "ns", []string{"b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missing["b"] != core.StateDeleted {
+		t.Fatalf("expect DELETED past grace period, got %v", missing["b"])
+	}
+	if err := eng.ReEnableKey(ctx, "ns", "b"); !errors.Is(err, core.ErrKeyNotFound) {
+		t.Fatalf("expect ErrKeyNotFound past grace period, got %v", err)
+	}
+}
+
+func TestStoreDefaultGracePeriod(t *testing.T) {
+	e := NewKeyEngine(func(c *core.KeyEngineConfig) { c.GracePeriod = 0 }).(*engine)
+	if want := core.NewKeyEngineConfig().GracePeriod; e.gracePeriod != want {
+		t.Fatalf("expect default grace period %v, got %v", want, e.gracePeriod)
 	}
 }
