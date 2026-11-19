@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 
@@ -148,7 +149,7 @@ func (k vaultKeys) open(namespace, token string, sealed []byte) ([]byte, error) 
 	}
 	plain, err := aead.Open(nil, sealed[1:1+vaultNonceSize], sealed[1+vaultNonceSize:], aad)
 	if err != nil {
-		return nil, errVaultSealed
+		return nil, fmt.Errorf("%w: %w", core.ErrDecryptionFailure, errVaultSealed)
 	}
 	return plain, nil
 }

@@ -185,7 +185,7 @@ func TestVault_MovedSealedValueFails(t *testing.T) {
 	}
 	a, b := m.Get("alice@example.org").Token, m.Get("bob@example.org").Token
 	p := newVaultProtector("tnt-swap", keys, swappingEngine{TokenEngine: store, a: a, b: b})
-	if _, err := p.Detokenize(ctx, []string{a}); !errors.Is(err, core.ErrDetokenizeFailure) {
+	if _, err := p.Detokenize(ctx, []string{a}); !errors.Is(err, ErrDetokenizeFailure) || !errors.Is(err, core.ErrDecryptionFailure) {
 		t.Fatalf("expect a moved sealed value to fail, got %v", err)
 	}
 }

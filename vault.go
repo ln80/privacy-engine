@@ -20,6 +20,24 @@ const maxTokenAttempts = 5
 
 var errVaultKeyMissing = errors.New("vault key is missing for a namespace that has active tokens")
 
+// Errors returned by the Protector's token methods. Each wraps the cause:
+// core.ErrTokenEngineNotConfigured, an engine error, or a vault error
+// (core.ErrDecryptionFailure for a sealed value that does not authenticate).
+var (
+	ErrTokenizeFailure    = newErr("failed to tokenize")
+	ErrDetokenizeFailure  = newErr("failed to detokenize")
+	ErrDeleteTokenFailure = newErr("failed to delete token")
+	ErrListTokensFailure  = newErr("failed to list tokens")
+)
+
+// wrapTokenErr wraps a token method's error in its category, with the namespace.
+func (p *protector) wrapTokenErr(category Error, err error) error {
+	if err == nil {
+		return nil
+	}
+	return category.withBase(err).withNamespace(p.namespace)
+}
+
 // vaultKeysFor returns the namespace's derived vault keys. With create, the
 // "@vault" DEK is created on first use; without it, ok is false when the
 // namespace has never tokenized (or was purged).
@@ -52,15 +70,15 @@ func (p *protector) vaultKeysFor(ctx context.Context, create bool) (vk vaultKeys
 
 // Tokenize implements Protector.
 func (p *protector) Tokenize(ctx context.Context, values []core.TokenData, opts ...func(*core.TokenizeConfig)) (result core.ValueTokenMap, err error) {
-	if p.TokenEngine == nil {
-		return nil, core.ErrTokenEngineNotConfigured
-	}
 	defer func() {
 		if err != nil {
 			result = nil
-			err = errors.Join(core.ErrTokenizeFailure, err)
+			err = p.wrapTokenErr(ErrTokenizeFailure, err)
 		}
 	}()
+	if p.TokenEngine == nil {
+		return nil, core.ErrTokenEngineNotConfigured
+	}
 
 	cfg := core.TokenizeConfig{TokenGenFunc: core.DefaultTokenGen}
 	for _, opt := range opts {
@@ -192,15 +210,15 @@ func (p *protector) openRecords(ctx context.Context, records []core.VaultRecord)
 
 // detokenize implements Protector.Detokenize.
 func (p *protector) detokenize(ctx context.Context, tokens []string) (result core.TokenValueMap, err error) {
-	if p.TokenEngine == nil {
-		return nil, core.ErrTokenEngineNotConfigured
-	}
 	defer func() {
 		if err != nil {
 			result = nil
-			err = errors.Join(core.ErrDetokenizeFailure, err)
+			err = p.wrapTokenErr(ErrDetokenizeFailure, err)
 		}
 	}()
+	if p.TokenEngine == nil {
+		return nil, core.ErrTokenEngineNotConfigured
+	}
 
 	result = core.TokenValueMap{}
 	if len(tokens) == 0 {
@@ -228,27 +246,24 @@ func (p *protector) detokenize(ctx context.Context, tokens []string) (result cor
 // it does not erase the subject's data: Forget does.
 func (p *protector) deleteToken(ctx context.Context, token string) error {
 	if p.TokenEngine == nil {
-		return core.ErrTokenEngineNotConfigured
+		return p.wrapTokenErr(ErrDeleteTokenFailure, core.ErrTokenEngineNotConfigured)
 	}
-	if err := p.TokenEngine.DeleteToken(ctx, p.namespace, token); err != nil {
-		return errors.Join(core.ErrDeleteTokenFailure, err)
-	}
-	return nil
+	return p.wrapTokenErr(ErrDeleteTokenFailure, p.TokenEngine.DeleteToken(ctx, p.namespace, token))
 }
 
 // listTokens implements Protector.ListTokens. Forgotten and erased tokens are listed with
 // their state and no value.
 func (p *protector) listTokens(ctx context.Context, query core.ListTokensQuery) (*core.ListTokensResult, error) {
 	if p.TokenEngine == nil {
-		return nil, core.ErrTokenEngineNotConfigured
+		return nil, p.wrapTokenErr(ErrListTokensFailure, core.ErrTokenEngineNotConfigured)
 	}
 	page, err := p.TokenEngine.ListTokens(ctx, p.namespace, query)
 	if err != nil {
-		return nil, err
+		return nil, p.wrapTokenErr(ErrListTokensFailure, err)
 	}
 	values, err := p.openRecords(ctx, page.Records)
 	if err != nil {
-		return nil, errors.Join(core.ErrDetokenizeFailure, err)
+		return nil, p.wrapTokenErr(ErrListTokensFailure, err)
 	}
 	res := &core.ListTokensResult{Tokens: make([]core.TokenRecord, 0, len(page.Records)), Cursor: page.Cursor}
 	for _, r := range page.Records {
