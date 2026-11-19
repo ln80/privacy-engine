@@ -89,9 +89,7 @@ Fields are tagged using `pii`, `sensitive`, or `sens` (interchangeable):
 By default `Encrypt` requires each record to use one subject, so forgetting that subject erases all of the record's personal data. A record whose data belongs to several subjects (for example an embedded author with its own `subjectID`) fails with struct-sensitive's `ErrMultipleSubjectID`. To allow it, encrypting each field under the nearest declared subject:
 
 ```go
-p := privacy.NewProtector("tenant", engine, func(pc *privacy.ProtectorConfig) {
-    pc.MultipleSubjects = true
-})
+p := privacy.NewProtector("tenant", engine, privacy.WithMultipleSubjects())
 ```
 
 `Decrypt` reads the subject from each value and accepts either.
@@ -189,16 +187,30 @@ defer clearFn()
 
 ## Configuration
 
-`NewProtector` accepts functional options:
+`NewProtector` accepts options:
+
+```go
+p := privacy.NewProtector("tenant", keyEngine,
+    privacy.WithTokenEngine(tokenEngine),
+    privacy.WithCacheTTL(30*time.Second),
+    privacy.WithAuditor(auditor),
+)
+```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `CacheEnabled` | `true` | Wrap the key engine with an in-memory TTL cache (the token engine is not cached; the vault key is cached with the other keys) |
-| `CacheTTL` | `20s` | Cache time-to-live. It bounds erasure latency across instances: a subject forgotten elsewhere stops decrypting here within `CacheTTL` |
-| `GracefulMode` | `true` | Disable keys before deleting (allows recovery). `Forget(id, Immediately())` overrides it for one call |
-| `Encryptor` | AES-256-GCM | Encryption algorithm |
-| `TokenEngine` | `nil` | Token engine for pseudonymization |
-| `Auditor` | `nil` | Receives an audit event for erasures and re-identifications (see [Audit events](#audit-events)) |
+| `WithCacheTTL(d)` / `WithoutCache()` | cache on, `20s` | Cache keys in memory (the token engine is not cached; the vault key is cached with the other keys). The TTL bounds erasure latency across instances: a subject forgotten elsewhere stops decrypting here within it |
+| `WithImmediateErasure()` | graceful | Every `Forget` erases at once, with no recovery. By default keys are disabled first and recoverable for the grace period; `Forget(id, Immediately())` erases at once for one call |
+| `WithTokenEngine(e)` | none | Token engine for pseudonymization |
+| `WithAuditor(a)` | none | Receives an audit event for erasures and re-identifications (see [Audit events](#audit-events)) |
+| `WithMultipleSubjects()` | off | Allow several subjects per struct (see above) |
+| `WithForgottenValue(v)` | `""` | Value of a forgotten field whose tag has no `replace=` |
+| `WithEncryptor(e)` | AES-256-GCM | Encryption algorithm |
+
+An option is a `func(*privacy.ProtectorConfig)`, so a closure that sets
+`ProtectorConfig` fields works as well. `NewFactory` takes `WithIdleTimeout`
+and `WithMonitorPeriod`; the in-memory key engine takes
+`memory.WithGracePeriod`.
 
 ## Backends
 
@@ -227,13 +239,13 @@ Erasure and re-identification must be provable (GDPR Art. 5(2) and 17). Set an
 the actor and the reason come from your `ctx`.
 
 ```go
-p := privacy.NewProtector("tenant", engine, func(pc *privacy.ProtectorConfig) {
-    pc.Auditor = privacy.AuditorFunc(func(ctx context.Context, e privacy.AuditEvent) error {
+p := privacy.NewProtector("tenant", engine, privacy.WithAuditor(
+    privacy.AuditorFunc(func(ctx context.Context, e privacy.AuditEvent) error {
         slog.InfoContext(ctx, "privacy audit", "op", e.Op, "subject", e.Subject,
             "final_at", e.FinalAt, "revealed", len(e.Revealed), "err", e.Err)
         return nil
-    })
-})
+    }),
+))
 ```
 
 A Forget event says when erasure is final (`FinalAt`), from the grace period

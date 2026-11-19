@@ -67,6 +67,12 @@ var _ core.KeyEngine = &engine{}
 var _ core.KeyEngineCache = &engine{}
 var _ core.GracePeriodReporter = &engine{}
 
+// WithGracePeriod sets how long a key disabled by a graceful Forget stays
+// recoverable (default 7 days). Zero or less keeps the default.
+func WithGracePeriod(d time.Duration) func(*core.KeyEngineConfig) {
+	return func(c *core.KeyEngineConfig) { c.GracePeriod = d }
+}
+
 // NewKeyEngine returns an in-memory core.KeyEngine implementation,
 // and is mainly used for tests.
 //

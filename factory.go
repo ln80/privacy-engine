@@ -53,7 +53,7 @@ type factory struct {
 // NewFactory returns a thread-safe factory service instance.
 // It panics if builderFunc is nil.
 // Options params allow overwriting the default configuration.
-func NewFactory(newProt FactoryNewFunc, opts ...func(*FactoryConfig)) Factory {
+func NewFactory(newProt FactoryNewFunc, opts ...FactoryOption) Factory {
 	if newProt == nil {
 		panic("invalid new Protector func, nil value found")
 	}

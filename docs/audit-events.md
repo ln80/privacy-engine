@@ -178,9 +178,7 @@ auditor := privacy.AuditorFunc(func(ctx context.Context, e privacy.AuditEvent) e
     return nil
 })
 
-p := privacy.NewProtector("tenant", engine, func(pc *privacy.ProtectorConfig) {
-    pc.Auditor = auditor
-})
+p := privacy.NewProtector("tenant", engine, privacy.WithAuditor(auditor))
 ```
 
 ## 8. Decisions

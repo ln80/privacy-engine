@@ -213,7 +213,7 @@ var _ Protector = &protector{}
 // It uses a default namespace if the given namespace is empty.
 //
 // By default, Cache and Graceful mode options are enabled and 'AES 256 GCM' Encryptor is used.
-func NewProtector(namespace string, engine core.KeyEngine, opts ...func(*ProtectorConfig)) Protector {
+func NewProtector(namespace string, engine core.KeyEngine, opts ...ProtectorOption) Protector {
 	if namespace == "" {
 		namespace = "default"
 	}

@@ -26,23 +26,22 @@ func Example() {
 	ctx := context.Background()
 
 	newProtector := func(namespace string) privacy.Protector {
-		return privacy.NewProtector(namespace, memory.NewKeyEngine(), func(pc *privacy.ProtectorConfig) {
-			// Token engine is optional.
-			// If not provided, tokenization methods return core.ErrTokenEngineNotConfigured.
-			pc.TokenEngine = memory.NewTokenEngine()
+		return privacy.NewProtector(namespace, memory.NewKeyEngine(),
+			// The token engine is optional. Without it, the token methods
+			// fail with core.ErrTokenEngineNotConfigured.
+			privacy.WithTokenEngine(memory.NewTokenEngine()),
 
-			// If cache is enabled then the service will decorates engines
-			// using an in-memory cache layer.
-			pc.CacheEnabled = true
-			pc.CacheTTL = 15 * time.Minute
+			// Keys are cached in memory; the TTL bounds how long a subject
+			// forgotten by another instance stays readable here.
+			privacy.WithCacheTTL(15*time.Minute),
 
-			// AES is 256GCM is the default encryptor.
-			pc.Encryptor = aes.New256GCMEncryptor()
+			// AES-256-GCM is the default encryptor.
+			privacy.WithEncryptor(aes.New256GCMEncryptor()),
 
-			// This Allow a soft crypto-shredding of personal data,
-			// so the data can be recovered within the grace period.
-			pc.GracefulMode = true
-		})
+			// Forget is graceful by default: keys are disabled and
+			// recoverable for the grace period. WithImmediateErasure()
+			// would erase at once.
+		)
 	}
 
 	factory := privacy.NewFactory(newProtector)
