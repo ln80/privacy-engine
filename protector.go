@@ -62,6 +62,11 @@ func checkSubjectID(id string) error {
 
 // Protector presents the service's interface that encrypts, decrypts,
 // and crypto-erases subjects' Personal data.
+//
+// With ProtectorConfig.Auditor set, Forget, Recover, DeleteToken, Purge,
+// Detokenize, ListTokens and DeriveSubjectKey each emit an AuditEvent. When it
+// cannot be recorded, the first four still apply and return ErrAuditFailure;
+// the last three return nothing.
 type Protector interface {
 
 	// Encrypt encrypts Personal data fields of the given structs pointers.
@@ -182,6 +187,11 @@ type ProtectorConfig struct {
 	// ForgottenValue replaces a field whose subject is forgotten, when the
 	// field's tag has no replace= option. Default "".
 	ForgottenValue string
+
+	// Auditor receives an event for every call of Forget, Recover,
+	// DeleteToken, Purge, Detokenize, ListTokens and DeriveSubjectKey
+	// (docs/audit-events.md). Nil by default: no events.
+	Auditor Auditor
 }
 
 // subjectKeyVersion is the only DEK version until rotation exists; it is bound
@@ -454,7 +464,7 @@ func (p *protector) DecryptStream(ctx context.Context, subID string, r io.Reader
 	return p.Encryptor.DecryptStream(p.subjectBinding(), key, r)
 }
 
-func (p *protector) DeriveSubjectKey(ctx context.Context, subID, purpose string) (key core.Key, err error) {
+func (p *protector) deriveSubjectKey(ctx context.Context, subID, purpose string) (key core.Key, err error) {
 	defer func() {
 		if err != nil {
 			err = ErrEncryptDecryptFailure.
@@ -529,8 +539,8 @@ func Immediately() func(*ForgetConfig) {
 	return func(c *ForgetConfig) { c.Immediate = true }
 }
 
-// Forget implements Protector.
-func (p *protector) Forget(ctx context.Context, subID string, opts ...func(*ForgetConfig)) (err error) {
+// forget implements Protector.Forget and records what it found in ev.
+func (p *protector) forget(ctx context.Context, subID string, cfg ForgetConfig, ev *AuditEvent) (err error) {
 
 	defer func() {
 		if err != nil {
@@ -545,13 +555,8 @@ func (p *protector) Forget(ctx context.Context, subID string, opts ...func(*Forg
 		return
 	}
 
-	cfg := ForgetConfig{}
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&cfg)
-		}
-	}
 	graceful := p.GracefulMode && !cfg.Immediate
+	ev.Immediate = !graceful
 
 	var keyErr error
 	if graceful {
@@ -562,11 +567,13 @@ func (p *protector) Forget(ctx context.Context, subID string, opts ...func(*Forg
 	if keyErr != nil && !errors.Is(keyErr, core.ErrKeyNotFound) {
 		return keyErr
 	}
+	ev.HadKey = keyErr == nil
 
 	hadEntry, err := p.forgetVaultEntry(ctx, subID, graceful)
 	if err != nil {
 		return err
 	}
+	ev.HadToken = hadEntry
 	// ErrKeyNotFound only when the ID had neither a key nor a vault entry:
 	// a token never used as a subject has only the latter.
 	if keyErr != nil && !hadEntry {
@@ -601,8 +608,8 @@ func (p *protector) forgetVaultEntry(ctx context.Context, token string, graceful
 	}
 }
 
-// Recover implements Protector.
-func (p *protector) Recover(ctx context.Context, subID string) (err error) {
+// recoverSubject implements Protector.Recover.
+func (p *protector) recoverSubject(ctx context.Context, subID string) (err error) {
 	defer func() {
 		if err != nil {
 			if errors.Is(err, core.ErrKeyNotFound) {
@@ -848,8 +855,8 @@ func (p *protector) Clear(ctx context.Context, force bool) (err error) {
 	return
 }
 
-// Purge implements Protector.
-func (p *protector) Purge(ctx context.Context) (err error) {
+// purge implements Protector.Purge.
+func (p *protector) purge(ctx context.Context) (err error) {
 	defer func() {
 		if err != nil {
 			err = ErrPurgeNamespaceFailure.

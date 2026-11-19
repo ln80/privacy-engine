@@ -190,8 +190,8 @@ func (p *protector) openRecords(ctx context.Context, records []core.VaultRecord)
 	return values, nil
 }
 
-// Detokenize implements Protector.
-func (p *protector) Detokenize(ctx context.Context, tokens []string) (result core.TokenValueMap, err error) {
+// detokenize implements Protector.Detokenize.
+func (p *protector) detokenize(ctx context.Context, tokens []string) (result core.TokenValueMap, err error) {
 	if p.TokenEngine == nil {
 		return nil, core.ErrTokenEngineNotConfigured
 	}
@@ -224,9 +224,9 @@ func (p *protector) Detokenize(ctx context.Context, tokens []string) (result cor
 	return result, nil
 }
 
-// DeleteToken implements Protector. It removes the token and its index entry;
+// deleteToken implements Protector.DeleteToken. It removes the token and its index entry;
 // it does not erase the subject's data: Forget does.
-func (p *protector) DeleteToken(ctx context.Context, token string) error {
+func (p *protector) deleteToken(ctx context.Context, token string) error {
 	if p.TokenEngine == nil {
 		return core.ErrTokenEngineNotConfigured
 	}
@@ -236,9 +236,9 @@ func (p *protector) DeleteToken(ctx context.Context, token string) error {
 	return nil
 }
 
-// ListTokens implements Protector. Forgotten and erased tokens are listed with
+// listTokens implements Protector.ListTokens. Forgotten and erased tokens are listed with
 // their state and no value.
-func (p *protector) ListTokens(ctx context.Context, query core.ListTokensQuery) (*core.ListTokensResult, error) {
+func (p *protector) listTokens(ctx context.Context, query core.ListTokensQuery) (*core.ListTokensResult, error) {
 	if p.TokenEngine == nil {
 		return nil, core.ErrTokenEngineNotConfigured
 	}

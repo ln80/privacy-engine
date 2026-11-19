@@ -198,6 +198,7 @@ defer clearFn()
 | `GracefulMode` | `true` | Disable keys before deleting (allows recovery). `Forget(id, Immediately())` overrides it for one call |
 | `Encryptor` | AES-256-GCM | Encryption algorithm |
 | `TokenEngine` | `nil` | Token engine for pseudonymization |
+| `Auditor` | `nil` | Receives an audit event for erasures and re-identifications (see [Audit events](#audit-events)) |
 
 ## Backends
 
@@ -216,6 +217,30 @@ func TestMyTokenEngine(t *testing.T) {
 ```
 
 A production key engine should wrap data keys with a key encryption key held outside the store (a KMS or HSM): crypto-shredding and the token vault are only as strong as the key engine. Graceful `Forget` completes when the grace period ends: either the engine erases by itself (a storage TTL), or a scheduled job calls `KeyEngine.DeleteUnusedKeys` and `TokenEngine.EraseForgotten`.
+
+## Audit events
+
+Erasure and re-identification must be provable (GDPR Art. 5(2) and 17). Set an
+`Auditor` and the protector hands it one `AuditEvent` per call of `Forget`,
+`Recover`, `DeleteToken`, `Purge`, `Detokenize`, `ListTokens` and
+`DeriveSubjectKey`, successful or not. Events never carry values or keys;
+the actor and the reason come from your `ctx`.
+
+```go
+p := privacy.NewProtector("tenant", engine, func(pc *privacy.ProtectorConfig) {
+    pc.Auditor = privacy.AuditorFunc(func(ctx context.Context, e privacy.AuditEvent) error {
+        slog.InfoContext(ctx, "privacy audit", "op", e.Op, "subject", e.Subject,
+            "final_at", e.FinalAt, "revealed", len(e.Revealed), "err", e.Err)
+        return nil
+    })
+})
+```
+
+A Forget event says when erasure is final (`FinalAt`), from the grace period
+the engines report through `core.GracePeriodReporter`. If the auditor fails,
+`Detokenize`, `ListTokens` and `DeriveSubjectKey` return nothing; the other
+calls are applied and return `ErrAuditFailure`, so retry them. The full
+design is in [docs/audit-events.md](docs/audit-events.md).
 
 ## Wire Format
 
