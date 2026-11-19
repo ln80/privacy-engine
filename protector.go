@@ -835,8 +835,7 @@ func (p *protector) Clear(ctx context.Context, force bool) (err error) {
 		if err != nil {
 			err = ErrClearCacheFailure.
 				withBase(err).
-				withNamespace(p.namespace).
-				withSubject(p.namespace)
+				withNamespace(p.namespace)
 		}
 	}()
 

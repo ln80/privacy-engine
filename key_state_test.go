@@ -288,3 +288,25 @@ func TestKeyStateErrorsDoNotLeak(t *testing.T) {
 		t.Fatalf("expect the subject available through Error.Subject, got %v", err)
 	}
 }
+
+// failingCache is a key engine cache whose ClearCache fails.
+type failingCache struct{ core.KeyEngineCache }
+
+func (failingCache) ClearCache(context.Context, string, bool) error {
+	return errors.New("clear failed")
+}
+
+// A Clear error names the namespace only: it concerns no subject.
+func TestClearErrorHasNoSubject(t *testing.T) {
+	eng := failingCache{memory.NewKeyEngine().(core.KeyEngineCache)}
+	p := NewProtector("tenant-x", eng)
+
+	err := p.Clear(context.Background(), true)
+	var perr Error
+	if !errors.Is(err, ErrClearCacheFailure) || !errors.As(err, &perr) {
+		t.Fatalf("expect ErrClearCacheFailure, got %v", err)
+	}
+	if perr.Subject() != "" || perr.Namespace() != "tenant-x" {
+		t.Fatalf("expect namespace only, got subject=%q namespace=%q", perr.Subject(), perr.Namespace())
+	}
+}
