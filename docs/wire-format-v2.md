@@ -2,9 +2,8 @@
 
 | | |
 |---|---|
-| Status | **Specification.** Implemented on `fix/audit-hardening` (commits in section 9) |
+| Status | **Specification**, implemented since v0.7.0 |
 | Code | `wire_format.go` (field encoding), `aes/256_gcm.go` and `aes/util.go` (field crypto), `aes/stream.go` (streams), `protector.go` (behaviour) |
-| Findings | Fixes PE-02, PE-03, PE-05, PE-10, PE-23. PE-06 is handled by a rule (section 6). PE-11 is an accepted risk (section 7) |
 | Compatibility | None. v1 field values, the legacy `<pii:` form and stream v1 are not parsed |
 
 ## 1. Key hierarchy
@@ -24,7 +23,7 @@ Each layer knows only about the layer just below it:
 ```
 
 - **A value says which DEK to use, never how the DEK is protected.** How a DEK is wrapped is the key engine's business. A KEK migration or a different KEK provider rewrites key records only, never data.
-- **Crypto-shredding covers every use.** Field values, stream keys and derived keys all depend on the DEK. The one exception is a derived key that a caller stores itself (PE-14). Storing it is the caller's responsibility.
+- **Crypto-shredding covers every use.** Field values, stream keys and derived keys all depend on the DEK. The one exception is a derived key that a caller stores itself. Storing it is the caller's responsibility.
 
 ## 2. Field value encoding
 
@@ -65,7 +64,7 @@ ciphertext = nonce | AES-256-GCM-Seal(key = DEK, nonce, plaintext, aad)
 aad        = "privacy-engine/field/v2" | alg (1) | keyVersion (4, BE) | len16(namespace) | namespace
 ```
 
-- **The key** is the subject's 32-byte DEK. Non-256-bit and all-zero keys are rejected (PE-08).
+- **The key** is the subject's 32-byte DEK. Non-256-bit and all-zero keys are rejected.
 - **The nonce** is 96 random bits per value. The usual bound for random GCM nonces is about 2³² encryptions per key. A DEK belongs to one subject in one namespace, so the bound applies per subject. Key versions are the remedy if a subject ever gets close.
 - **The AAD** is canonical and length-prefixed, so no two different bindings encode to the same bytes. It comes from `core.Binding{Namespace, KeyVersion}` plus the encryptor's algorithm ID. Each part has a job:
   - The namespace rejects a value moved to another tenant, even if a key store bug hands back a key.
@@ -85,7 +84,7 @@ The subject named **in the value** selects the key. If the struct declares a dif
 | Not a field value | the field's subject is active | Encrypted under the field's subject, `keyVersion` 1 |
 | Not a field value | the field's subject is forgotten | `ErrSubjectForgotten` |
 | Field value with an unknown `alg` or `keyVersion` | – | `ErrValueNotAuthentic` (wrapping `ErrInvalidWireFormat`) |
-| Field value | active, authenticates | Kept as is (idempotency, PE-05) |
+| Field value | active, authenticates | Kept as is (idempotency) |
 | Field value | active, does not authenticate | `ErrValueNotAuthentic` (fail closed) |
 | Field value | disabled or deleted | Kept as is: the value is shredded, and saving its record again must keep working |
 | Field value | unknown | `ErrKeyUnknown` |
@@ -101,7 +100,7 @@ The struct's subjects get their keys through `GetOrCreateKeys`. Subjects that on
 | Field value | active, authenticates | Plaintext |
 | Field value | active, does not authenticate | `core.ErrDecryptionFailure` (tampered, wrong namespace, or wrong key) |
 | Field value | disabled or deleted (forgotten) | The tag's `replace=` value, otherwise `ProtectorConfig.ForgottenValue` (default `""`) |
-| Field value | unknown (never created, purged, wrong namespace, misconfigured backend) | `ErrKeyUnknown`, field untouched (PE-10) |
+| Field value | unknown (never created, purged, wrong namespace, misconfigured backend) | `ErrKeyUnknown`, field untouched |
 
 `DecryptStream` and `DeriveSubjectKey` return `ErrSubjectForgotten` or `ErrKeyUnknown` on the same distinction. `EncryptStream` creates missing keys, so it can only report a forgotten subject.
 
@@ -140,7 +139,7 @@ segment i = AES-256-GCM(streamKey, nonce = noncePrefix | i (4, BE) | final (1), 
 
 ## 6. Subject IDs
 
-**Rule (PE-06):** subject IDs must be pseudonymous identifiers, such as random IDs or tokens from the tokenizer. Never use an email, a name, or any other direct identifier as a subject ID.
+**Rule:** subject IDs must be pseudonymous identifiers, such as random IDs or tokens from the tokenizer. Never use an email, a name, or any other direct identifier as a subject ID.
 
 Every field value names its subject in clear. The record already stores the same subject in clear in its `subjectID` field, so following the rule means the value exposes nothing new.
 
@@ -158,7 +157,7 @@ Revision 1 of this design took the subject from the struct instead. It would hav
 
 | Item | Why it is accepted |
 |---|---|
-| **Field swap within one subject (PE-11).** Two values of the same subject and namespace (email ↔ phone of the same person) can be swapped undetected | Requires write access to the data store and only rearranges one person's own data. Binding Go field paths would make old data unreadable after a refactor, which is a real risk for event-sourced callers. If needed later, a stable `bind=<name>` tag option can arrive as a new `alg` with no format change |
+| **Field swap within one subject.** Two values of the same subject and namespace (email ↔ phone of the same person) can be swapped undetected | Requires write access to the data store and only rearranges one person's own data. Binding Go field paths would make old data unreadable after a refactor, which is a real risk for event-sourced callers. If needed later, a stable `bind=<name>` tag option can arrive as a new `alg` with no format change |
 | **Subject visible in values** | See section 6. The rule must be followed by callers |
 | **Random-nonce bound** | About 2³² values per subject key (section 3) |
 | **Key rotation not built** | `keyVersion` is reserved and authenticated. Rotation needs the key store to keep several versions per subject; it is designed separately |
@@ -177,14 +176,3 @@ Revision 1 of this design took the subject from the struct instead. It would hav
 | D-C | A value that looks encrypted but does not authenticate under an active key fails `Encrypt` |
 | D-D | Prefix `ENC.`; only v2 is parsed |
 | – | A purged namespace's data decrypts to `ErrKeyUnknown`, not a placeholder |
-
-## 9. Implementation
-
-| Commit | Change | Findings |
-|---|---|---|
-| `7924951` | Stream format v2 | PE-02, PE-19 |
-| `74dac69` | Reject a too-short ciphertext | PE-03 |
-| `182d867` | `GetKeys` reports missing-key states | PE-10 (contract) |
-| `f1ff4f7` | `core.Binding`, algorithm ID, `[]byte` plaintext, key version in the stream header | PE-23 |
-| `2ebc08d` | Field encoding v2, strict parser, v1 removed | PE-23 |
-| `50797ec` | Idempotency by authentication; Decrypt state table; `ForgottenValue` | PE-05, PE-10 |

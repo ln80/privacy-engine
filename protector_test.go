@@ -510,7 +510,7 @@ func BenchmarkProtector(b *testing.B) {
 // wraps it in the cache wrapper exactly as it does a production backend.
 type originOnly struct{ core.KeyEngine }
 
-// PE-04 regression through the public API: Forget and Recover succeed after
+// Regression through the public API: Forget and Recover succeed after
 // the cache was cleared, and report the origin's state.
 func TestProtector_ForgetRecoverAfterCacheClear(t *testing.T) {
 	ctx := context.Background()

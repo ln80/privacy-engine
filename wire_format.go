@@ -104,7 +104,7 @@ func parseWireValue(str string) (v wireValue, err error) {
 		return v, errors.Join(ErrInvalidWireFormat, err)
 	}
 	// The header must be followed by a ciphertext; the Encryptor checks its own
-	// minimum length (nonce + tag for AES-256-GCM, PE-03).
+	// minimum length (nonce + tag for AES-256-GCM).
 	if len(payload) <= wireHeaderSize {
 		return v, errors.Join(ErrInvalidWireFormat, errors.New("payload too short"))
 	}

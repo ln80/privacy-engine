@@ -11,7 +11,7 @@ import (
 )
 
 // Step 5 of wire format v2: Encrypt keeps an existing value only when it
-// authenticates (PE-05), and Decrypt acts on the key state (PE-10).
+// authenticates, and Decrypt acts on the key state.
 
 func newStateProtector(ns string, eng core.KeyEngine, opts ...func(*ProtectorConfig)) Protector {
 	opts = append([]func(*ProtectorConfig){func(pc *ProtectorConfig) { pc.CacheEnabled = false }}, opts...)
@@ -27,7 +27,7 @@ func encryptedProfile(t *testing.T, p Protector, subject string) *Profile {
 	return pf
 }
 
-// PE-10: data read in the wrong namespace is an error, never a silent wipe.
+// Data read in the wrong namespace is an error, never a silent wipe.
 func TestDecrypt_WrongNamespaceIsAnError(t *testing.T) {
 	ctx := context.Background()
 	eng := memory.NewKeyEngine()
@@ -127,7 +127,7 @@ func TestUnknownSubjectValue(t *testing.T) {
 	}
 }
 
-// PE-05: input that merely looks encrypted is refused, not stored as is.
+// Input that merely looks encrypted is refused, not stored as is.
 func TestEncrypt_LookAlikeValueIsRefused(t *testing.T) {
 	ctx := context.Background()
 	p := newStateProtector("tenant-pe05", memory.NewKeyEngine())

@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// Redaction of secrets and personal data (PE-09).
+// Redaction of secrets and personal data.
 //
 // Key, IDKey and TokenData must never print their value by accident: not in
 // fmt with any verb (%v %+v %#v %s %q %x %d ...), not in log/slog, not in

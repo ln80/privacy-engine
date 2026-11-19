@@ -290,7 +290,7 @@ func (e *engine) invalidate(namespace, keyID string) {
 // DisableKey implements core.KeyEngine
 //
 // As a cache, the result is the origin's: once the origin succeeds, the cached
-// entry, present or not, cannot turn that success into an error (PE-04).
+// entry, present or not, cannot turn that success into an error.
 func (e *engine) DisableKey(ctx context.Context, namespace, keyID string) error {
 	if e.origin != nil {
 		if err := e.origin.DisableKey(ctx, namespace, keyID); err != nil {

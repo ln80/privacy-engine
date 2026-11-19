@@ -300,7 +300,7 @@ func (p *protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) 
 		if val == "" {
 			return
 		}
-		// Idempotency (PE-05): decided by authentication, never by shape.
+		// Idempotency: decided by authentication, never by shape.
 		if wv, perr := parseWireValue(val); perr == nil {
 			err = p.checkEncrypted(fr, wv, ring)
 			return
@@ -567,8 +567,8 @@ func (p *protector) Forget(ctx context.Context, subID string, opts ...func(*Forg
 	if err != nil {
 		return err
 	}
-	// ErrKeyNotFound only when the ID had neither a key nor a vault entry
-	// (decision V10): a token never used as a subject has only the latter.
+	// ErrKeyNotFound only when the ID had neither a key nor a vault entry:
+	// a token never used as a subject has only the latter.
 	if keyErr != nil && !hadEntry {
 		return keyErr
 	}
@@ -578,7 +578,7 @@ func (p *protector) Forget(ctx context.Context, subID string, opts ...func(*Forg
 // forgetVaultEntry applies Forget to the ID's vault entry, if the protector
 // has a token engine and the ID is a token. Graceful mode hides the entry and
 // removes its index entry, so the value no longer finds the token and the
-// same person tokenized again gets a new one (decision V3); the sealed value
+// same person tokenized again gets a new one; the sealed value
 // stays for Recover until the janitor's EraseForgotten. Immediate mode erases
 // it at once.
 func (p *protector) forgetVaultEntry(ctx context.Context, token string, graceful bool) (bool, error) {
@@ -641,7 +641,7 @@ func (p *protector) Recover(ctx context.Context, subID string) (err error) {
 
 // restoreVaultEntry makes a forgotten vault entry active again. Its index entry
 // is recreated unless a newer token took the value meanwhile; the old data is
-// then recovered and the value stays with the newer token (decision V11). An
+// then recovered and the value stays with the newer token. An
 // erased entry cannot come back.
 func (p *protector) restoreVaultEntry(ctx context.Context, token string) (bool, error) {
 	if p.TokenEngine == nil {
@@ -764,7 +764,7 @@ func (p *protector) openValue(fr sensitive.FieldReplace, wv wireValue, ring keyR
 }
 
 // checkEncrypted decides whether Encrypt may keep a value already in wire
-// format (PE-05, decision D-C):
+// format:
 //   - active key and it authenticates: keep;
 //   - forgotten subject: keep, it is a shredded value;
 //   - anything else: error, never re-encrypt a look-alike.

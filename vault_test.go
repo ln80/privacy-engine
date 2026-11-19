@@ -74,7 +74,7 @@ func TestVault_RoundTrip(t *testing.T) {
 		}
 	}
 
-	// PX-18: the store holds no value in clear, anywhere.
+	// The store holds no value in clear, anywhere.
 	stored, err := store.ListTokens(ctx, "tnt-vault", core.ListTokensQuery{})
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestVault_RoundTrip(t *testing.T) {
 	}
 }
 
-// PX-21 regression: concurrent first Tokenize of one value, from independent
+// Regression: concurrent first Tokenize of one value, from independent
 // protectors over one store, yields one token.
 func TestVault_ConcurrentFirstTokenize(t *testing.T) {
 	ctx := context.Background()
@@ -125,7 +125,7 @@ func TestVault_ConcurrentFirstTokenize(t *testing.T) {
 	}
 }
 
-// PX-20 regression: a generated token that already exists is replaced, never
+// Regression: a generated token that already exists is replaced, never
 // returned for another value.
 func TestVault_TokenCollisionIsRetried(t *testing.T) {
 	ctx := context.Background()

@@ -211,7 +211,7 @@ func TestCacheWrapperReportsOriginStates(t *testing.T) {
 	}
 }
 
-// PE-04 regression: once the origin succeeds, the cache wrapper reports
+// Regression: once the origin succeeds, the cache wrapper reports
 // success whether or not it holds the key, and never serves a stale state.
 func TestCacheWrapperDisableReEnableFollowOrigin(t *testing.T) {
 	ctx := context.Background()

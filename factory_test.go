@@ -115,7 +115,7 @@ func TestFactory(t *testing.T) {
 		"expect Protectors removed from the registry on shutdown")
 }
 
-// PE-07 regression: the clear func returned by Instance works after Monitor
+// Regression: the clear func returned by Instance works after Monitor
 // evicted the entry, and does not race with the registry.
 func TestFactory_ClearFuncAfterEviction(t *testing.T) {
 	ctx := context.Background()

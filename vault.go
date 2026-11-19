@@ -113,8 +113,8 @@ func (p *protector) Tokenize(ctx context.Context, values []core.TokenData, opts 
 }
 
 // insertToken creates the vault record of a value the namespace has no token
-// for. A generated token that already exists is replaced (PX-20); if another
-// Tokenize of the same value won the race, its token is returned (PX-21).
+// for. A generated token that already exists is replaced; if another
+// Tokenize of the same value won the race, its token is returned.
 func (p *protector) insertToken(ctx context.Context, vk vaultKeys, cfg core.TokenizeConfig, value core.TokenData, index []byte) (string, error) {
 	for range maxTokenAttempts {
 		gen, err := cfg.TokenGenFunc(ctx, p.namespace)
@@ -225,7 +225,7 @@ func (p *protector) Detokenize(ctx context.Context, tokens []string) (result cor
 }
 
 // DeleteToken implements Protector. It removes the token and its index entry;
-// it does not erase the subject's data (decision V8): Forget does.
+// it does not erase the subject's data: Forget does.
 func (p *protector) DeleteToken(ctx context.Context, token string) error {
 	if p.TokenEngine == nil {
 		return core.ErrTokenEngineNotConfigured
@@ -237,7 +237,7 @@ func (p *protector) DeleteToken(ctx context.Context, token string) error {
 }
 
 // ListTokens implements Protector. Forgotten and erased tokens are listed with
-// their state and no value (decision V9).
+// their state and no value.
 func (p *protector) ListTokens(ctx context.Context, query core.ListTokensQuery) (*core.ListTokensResult, error) {
 	if p.TokenEngine == nil {
 		return nil, core.ErrTokenEngineNotConfigured

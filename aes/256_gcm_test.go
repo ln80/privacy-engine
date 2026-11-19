@@ -88,7 +88,7 @@ func TestAES256RoundTrip(t *testing.T) {
 	}
 }
 
-// PE-03 regression: a ciphertext shorter than nonce + tag returns an error
+// Regression: a ciphertext shorter than nonce + tag returns an error
 // instead of panicking on the nonce slice.
 func TestAES256DecryptShortCiphertext(t *testing.T) {
 	enc := New256GCMEncryptor()
@@ -112,7 +112,7 @@ func FuzzDecrypt(f *testing.F) {
 		f.Fatal(err)
 	}
 	f.Add(valid)
-	f.Add([]byte{1, 2, 3}) // the PE-03 crash input
+	f.Add([]byte{1, 2, 3}) // the short-ciphertext crash input
 	f.Add(valid[:28])
 	f.Fuzz(func(t *testing.T, in []byte) {
 		got, err := enc.Decrypt(bind(testNS), key, in)

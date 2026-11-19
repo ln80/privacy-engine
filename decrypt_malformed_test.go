@@ -8,7 +8,7 @@ import (
 	"github.com/ln80/privacy-engine/memory"
 )
 
-// PE-03 regression through the public API: a field value with a valid wire
+// Regression through the public API: a field value with a valid wire
 // shape but a 3-byte ciphertext must fail Decrypt, not crash the process, and
 // must leave the field untouched.
 func TestProtector_DecryptShortCiphertext(t *testing.T) {
