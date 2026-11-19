@@ -60,92 +60,6 @@ func checkSubjectID(id string) error {
 	return nil
 }
 
-// Protector presents the service's interface that encrypts, decrypts,
-// and crypto-erases subjects' Personal data.
-type Protector interface {
-
-	// Encrypt encrypts Personal data fields of the given structs pointers.
-	// It does its best to ensure atomicity in case of multiple structs pointers.
-	// It ensures idempotency and only encrypts fields once: a value already in
-	// wire format is kept only if it authenticates under its own subject's
-	// active key, or if that subject is forgotten (the value is shredded).
-	// Any other look-alike value fails with ErrValueNotAuthentic.
-	//
-	// Each field is encrypted under its own subject's key. By default a struct
-	// must use one subject: a second subjectID that governs data, or differing
-	// subject values, fail with struct-sensitive's ErrMultipleSubjectID. Set
-	// ProtectorConfig.MultipleSubjects to allow several. A subject whose key is
-	// forgotten fails with ErrSubjectForgotten.
-	Encrypt(ctx context.Context, structPts ...any) error
-
-	// Decrypt decrypts Personal data fields of the given structs pointers.
-	// Each struct is all-or-nothing. A field that is not in wire format is
-	// left as is. Each value's own subject selects its key:
-	//   - active key: the value is decrypted; one that does not authenticate is an error;
-	//   - disabled or deleted key (forgotten subject): the field gets the tag's
-	//     replace= option, or ProtectorConfig.ForgottenValue;
-	//   - unknown key: ErrKeyUnknown, and the field is left untouched.
-	Decrypt(ctx context.Context, structPts ...any) error
-
-	// EncryptStream reads plaintext from r and returns a reader of ciphertext.
-	// subID selects the encryption key within the namespace.
-	EncryptStream(ctx context.Context, subID string, r io.Reader) (io.Reader, error)
-
-	// DecryptStream reads ciphertext from r and returns a reader of plaintext.
-	// subID selects the decryption key within the namespace.
-	DecryptStream(ctx context.Context, subID string, r io.Reader) (io.Reader, error)
-
-	// DeriveSubjectKey derives a purpose-scoped key from the subject's DEK without exposing it.
-	// purpose is mixed into the derivation (e.g. a client ref hash for attachments).
-	DeriveSubjectKey(ctx context.Context, subID, purpose string) (core.Key, error)
-
-	// EncryptStreamWithKey encrypts plaintext from r using the provided key,
-	// bypassing the KeyEngine lookup.
-	EncryptStreamWithKey(ctx context.Context, key core.Key, r io.Reader) (io.Reader, error)
-
-	// DecryptStreamWithKey decrypts ciphertext from r using the provided key,
-	// bypassing the KeyEngine lookup.
-	DecryptStreamWithKey(ctx context.Context, key core.Key, r io.Reader) (io.Reader, error)
-
-	// Forget removes the associated encryption materials of the given subject,
-	// and crypto-erases its Personal data.
-	//
-	// In graceful mode (the default) the key is disabled and the vault entry
-	// hidden; both are erased once the grace period ends, and Recover works
-	// until then. Immediately() erases both at once for this call, whatever
-	// the protector's GracefulMode.
-	Forget(ctx context.Context, subID string, opts ...func(*ForgetConfig)) error
-
-	// Recover allows to recover encryption materials of the given subject.
-	//
-	// It fails if the grace period was exceeded, and encryption materials were hard deleted.
-	Recover(ctx context.Context, subID string) error
-
-	// Clear clears encryption materials' cache based on cache-related configuration.
-	Clear(ctx context.Context, force bool) error
-
-	// Tokenize returns the token of each value, creating one for a value the
-	// namespace has never seen (or whose token was forgotten). The vault stores
-	// each value sealed and looked up through a keyed blind index: never in
-	// clear (token vault v2, see vault.go).
-	Tokenize(ctx context.Context, values []core.TokenData, opts ...func(*core.TokenizeConfig)) (core.ValueTokenMap, error)
-
-	// Detokenize returns the value of each active token. Unknown, forgotten
-	// and erased tokens are omitted.
-	Detokenize(ctx context.Context, tokens []string) (core.TokenValueMap, error)
-
-	// DeleteToken deletes the given token.
-	DeleteToken(ctx context.Context, token string) error
-
-	// ListTokens lists a page of tokens with their state. Values are set for
-	// active tokens only.
-	ListTokens(ctx context.Context, query core.ListTokensQuery) (result *core.ListTokensResult, err error)
-
-	// Purge hard-deletes every encryption key and token in the protector's
-	// namespace, then clears caches. Idempotent.
-	Purge(ctx context.Context) error
-}
-
 // ProtectorConfig presents the configuration of Protector service
 type ProtectorConfig struct {
 
@@ -182,19 +96,30 @@ type ProtectorConfig struct {
 	// ForgottenValue replaces a field whose subject is forgotten, when the
 	// field's tag has no replace= option. Default "".
 	ForgottenValue string
+
+	// Auditor receives an event for every call of Forget, Recover,
+	// DeleteToken, Purge, Detokenize, ListTokens and DeriveSubjectKey
+	// (docs/audit-events.md). Nil by default: no events.
+	Auditor Auditor
 }
 
 // subjectKeyVersion is the only DEK version until rotation exists; it is bound
 // into every ciphertext so rotation can later tell versions apart.
 const subjectKeyVersion uint32 = 1
 
-type protector struct {
+// Protector encrypts, decrypts and crypto-erases subjects' personal data,
+// and tokenizes values. Build it with NewProtector; it is safe for concurrent
+// use. Code that needs only part of it can accept one of the role interfaces:
+// Encrypter, Shredder, Tokenizer, Reidentifier.
+//
+// With ProtectorConfig.Auditor set, Forget, Recover, DeleteToken, Purge,
+// Detokenize, ListTokens and DeriveSubjectKey each emit an AuditEvent. When it
+// cannot be recorded, the first four still apply and return ErrAuditFailure;
+// the last three return nothing.
+type Protector struct {
 	namespace string
-
-	*ProtectorConfig
+	cfg       *ProtectorConfig
 }
-
-var _ Protector = &protector{}
 
 // NewProtector returns a Protector service instance.
 // It requires a Key engine and accepts options to overwrite the default configuration.
@@ -203,14 +128,14 @@ var _ Protector = &protector{}
 // It uses a default namespace if the given namespace is empty.
 //
 // By default, Cache and Graceful mode options are enabled and 'AES 256 GCM' Encryptor is used.
-func NewProtector(namespace string, engine core.KeyEngine, opts ...func(*ProtectorConfig)) Protector {
+func NewProtector(namespace string, engine core.KeyEngine, opts ...ProtectorOption) *Protector {
 	if namespace == "" {
 		namespace = "default"
 	}
 
-	p := &protector{
+	p := &Protector{
 		namespace: namespace,
-		ProtectorConfig: &ProtectorConfig{
+		cfg: &ProtectorConfig{
 			Encryptor:    aes.New256GCMEncryptor(),
 			KeyEngine:    engine,
 			CacheEnabled: true,
@@ -222,23 +147,35 @@ func NewProtector(namespace string, engine core.KeyEngine, opts ...func(*Protect
 		if opt == nil {
 			continue
 		}
-		opt(p.ProtectorConfig)
+		opt(p.cfg)
 	}
 
-	if p.KeyEngine == nil {
+	if p.cfg.KeyEngine == nil {
 		panic("invalid Key Engine service, nil value found")
 	}
 
-	if p.CacheEnabled {
-		if _, ok := p.KeyEngine.(core.KeyEngineCache); !ok {
-			p.KeyEngine = memory.NewCacheWrapper(p.KeyEngine, p.CacheTTL)
+	if p.cfg.CacheEnabled {
+		if _, ok := p.cfg.KeyEngine.(core.KeyEngineCache); !ok {
+			p.cfg.KeyEngine = memory.NewCacheWrapper(p.cfg.KeyEngine, p.cfg.CacheTTL)
 		}
 	}
 
 	return p
 }
 
-func (p *protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) {
+// Encrypt encrypts Personal data fields of the given structs pointers.
+// It does its best to ensure atomicity in case of multiple structs pointers.
+// It ensures idempotency and only encrypts fields once: a value already in
+// wire format is kept only if it authenticates under its own subject's
+// active key, or if that subject is forgotten (the value is shredded).
+// Any other look-alike value fails with ErrValueNotAuthentic.
+//
+// Each field is encrypted under its own subject's key. By default a struct
+// must use one subject: a second subjectID that governs data, or differing
+// subject values, fail with struct-sensitive's ErrMultipleSubjectID. Set
+// ProtectorConfig.MultipleSubjects to allow several. A subject whose key is
+// forgotten fails with ErrSubjectForgotten.
+func (p *Protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) {
 	defer func() {
 		if err != nil {
 			err = ErrEncryptDecryptFailure.
@@ -248,7 +185,7 @@ func (p *protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) 
 	}()
 
 	mode := sensitive.SingleSubject
-	if p.MultipleSubjects {
+	if p.cfg.MultipleSubjects {
 		mode = sensitive.MultipleSubjects
 	}
 	structs := make([]sensitive.Struct, 0)
@@ -300,7 +237,7 @@ func (p *protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) 
 		if val == "" {
 			return
 		}
-		// Idempotency (PE-05): decided by authentication, never by shape.
+		// Idempotency: decided by authentication, never by shape.
 		if wv, perr := parseWireValue(val); perr == nil {
 			err = p.checkEncrypted(fr, wv, ring)
 			return
@@ -311,13 +248,13 @@ func (p *protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) 
 			err = ErrSubjectForgotten.withSubject(fr.SubjectID)
 			return
 		}
-		encodedVal, err := p.Encryptor.Encrypt(p.subjectBinding(), key, []byte(val))
+		encodedVal, err := p.cfg.Encryptor.Encrypt(p.subjectBinding(), key, []byte(val))
 		if err != nil {
 			return
 		}
 		newVal = encodeWireValue(wireValue{
 			subjectID:  fr.SubjectID,
-			alg:        p.Encryptor.Algorithm(),
+			alg:        p.cfg.Encryptor.Algorithm(),
 			keyVersion: subjectKeyVersion,
 			ciphertext: encodedVal,
 		})
@@ -333,7 +270,14 @@ func (p *protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) 
 	return
 }
 
-func (p *protector) Decrypt(ctx context.Context, structPtrs ...any) (err error) {
+// Decrypt decrypts Personal data fields of the given structs pointers.
+// Each struct is all-or-nothing. A field that is not in wire format is
+// left as is. Each value's own subject selects its key:
+//   - active key: the value is decrypted; one that does not authenticate is an error;
+//   - disabled or deleted key (forgotten subject): the field gets the tag's
+//     replace= option, or ProtectorConfig.ForgottenValue;
+//   - unknown key: ErrKeyUnknown, and the field is left untouched.
+func (p *Protector) Decrypt(ctx context.Context, structPtrs ...any) (err error) {
 	defer func() {
 		if err != nil {
 			err = ErrEncryptDecryptFailure.withBase(err).withNamespace(p.namespace)
@@ -358,7 +302,7 @@ func (p *protector) Decrypt(ctx context.Context, structPtrs ...any) (err error) 
 	if err != nil {
 		return
 	}
-	keys, states, err := p.KeyEngine.GetKeys(ctx, p.namespace, subjectIDs)
+	keys, states, err := p.cfg.KeyEngine.GetKeys(ctx, p.namespace, subjectIDs)
 	if err != nil {
 		return
 	}
@@ -399,7 +343,9 @@ func (p *protector) Decrypt(ctx context.Context, structPtrs ...any) (err error) 
 	return
 }
 
-func (p *protector) EncryptStream(ctx context.Context, subID string, r io.Reader) (out io.Reader, err error) {
+// EncryptStream reads plaintext from r and returns a reader of ciphertext.
+// subID selects the encryption key within the namespace.
+func (p *Protector) EncryptStream(ctx context.Context, subID string, r io.Reader) (out io.Reader, err error) {
 	defer func() {
 		if err != nil {
 			err = ErrEncryptDecryptFailure.
@@ -415,7 +361,7 @@ func (p *protector) EncryptStream(ctx context.Context, subID string, r io.Reader
 		return nil, err
 	}
 
-	keys, err := p.KeyEngine.GetOrCreateKeys(ctx, p.namespace, []string{subID}, p.Encryptor.KeyGen())
+	keys, err := p.cfg.KeyEngine.GetOrCreateKeys(ctx, p.namespace, []string{subID}, p.cfg.Encryptor.KeyGen())
 	if err != nil {
 		return nil, err
 	}
@@ -426,10 +372,12 @@ func (p *protector) EncryptStream(ctx context.Context, subID string, r io.Reader
 		return nil, ErrSubjectForgotten.withSubject(subID)
 	}
 
-	return p.Encryptor.EncryptStream(p.subjectBinding(), key, r)
+	return p.cfg.Encryptor.EncryptStream(p.subjectBinding(), key, r)
 }
 
-func (p *protector) DecryptStream(ctx context.Context, subID string, r io.Reader) (out io.Reader, err error) {
+// DecryptStream reads ciphertext from r and returns a reader of plaintext.
+// subID selects the decryption key within the namespace.
+func (p *Protector) DecryptStream(ctx context.Context, subID string, r io.Reader) (out io.Reader, err error) {
 	defer func() {
 		if err != nil {
 			err = ErrEncryptDecryptFailure.
@@ -451,10 +399,10 @@ func (p *protector) DecryptStream(ctx context.Context, subID string, r io.Reader
 	}
 	defer core.ZeroKey(key)
 
-	return p.Encryptor.DecryptStream(p.subjectBinding(), key, r)
+	return p.cfg.Encryptor.DecryptStream(p.subjectBinding(), key, r)
 }
 
-func (p *protector) DeriveSubjectKey(ctx context.Context, subID, purpose string) (key core.Key, err error) {
+func (p *Protector) deriveSubjectKey(ctx context.Context, subID, purpose string) (key core.Key, err error) {
 	defer func() {
 		if err != nil {
 			err = ErrEncryptDecryptFailure.
@@ -491,7 +439,9 @@ func (p *protector) DeriveSubjectKey(ctx context.Context, subID, purpose string)
 	return core.Key(derived), nil
 }
 
-func (p *protector) EncryptStreamWithKey(ctx context.Context, key core.Key, r io.Reader) (out io.Reader, err error) {
+// EncryptStreamWithKey encrypts plaintext from r using the provided key,
+// bypassing the KeyEngine lookup.
+func (p *Protector) EncryptStreamWithKey(ctx context.Context, key core.Key, r io.Reader) (out io.Reader, err error) {
 	defer func() {
 		if err != nil {
 			err = ErrEncryptDecryptFailure.
@@ -500,10 +450,12 @@ func (p *protector) EncryptStreamWithKey(ctx context.Context, key core.Key, r io
 		}
 	}()
 
-	return p.Encryptor.EncryptStream(p.callerKeyBinding(), key, r)
+	return p.cfg.Encryptor.EncryptStream(p.callerKeyBinding(), key, r)
 }
 
-func (p *protector) DecryptStreamWithKey(ctx context.Context, key core.Key, r io.Reader) (out io.Reader, err error) {
+// DecryptStreamWithKey decrypts ciphertext from r using the provided key,
+// bypassing the KeyEngine lookup.
+func (p *Protector) DecryptStreamWithKey(ctx context.Context, key core.Key, r io.Reader) (out io.Reader, err error) {
 	defer func() {
 		if err != nil {
 			err = ErrEncryptDecryptFailure.
@@ -512,7 +464,7 @@ func (p *protector) DecryptStreamWithKey(ctx context.Context, key core.Key, r io
 		}
 	}()
 
-	return p.Encryptor.DecryptStream(p.callerKeyBinding(), key, r)
+	return p.cfg.Encryptor.DecryptStream(p.callerKeyBinding(), key, r)
 }
 
 // ForgetConfig configures one Forget call.
@@ -529,8 +481,8 @@ func Immediately() func(*ForgetConfig) {
 	return func(c *ForgetConfig) { c.Immediate = true }
 }
 
-// Forget implements Protector.
-func (p *protector) Forget(ctx context.Context, subID string, opts ...func(*ForgetConfig)) (err error) {
+// forget implements Protector.Forget and records what it found in ev.
+func (p *Protector) forget(ctx context.Context, subID string, cfg ForgetConfig, ev *AuditEvent) (err error) {
 
 	defer func() {
 		if err != nil {
@@ -545,30 +497,27 @@ func (p *protector) Forget(ctx context.Context, subID string, opts ...func(*Forg
 		return
 	}
 
-	cfg := ForgetConfig{}
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&cfg)
-		}
-	}
-	graceful := p.GracefulMode && !cfg.Immediate
+	graceful := p.cfg.GracefulMode && !cfg.Immediate
+	ev.Immediate = !graceful
 
 	var keyErr error
 	if graceful {
-		keyErr = p.KeyEngine.DisableKey(ctx, p.namespace, subID)
+		keyErr = p.cfg.KeyEngine.DisableKey(ctx, p.namespace, subID)
 	} else {
-		keyErr = p.KeyEngine.DeleteKey(ctx, p.namespace, subID)
+		keyErr = p.cfg.KeyEngine.DeleteKey(ctx, p.namespace, subID)
 	}
 	if keyErr != nil && !errors.Is(keyErr, core.ErrKeyNotFound) {
 		return keyErr
 	}
+	ev.HadKey = keyErr == nil
 
 	hadEntry, err := p.forgetVaultEntry(ctx, subID, graceful)
 	if err != nil {
 		return err
 	}
-	// ErrKeyNotFound only when the ID had neither a key nor a vault entry
-	// (decision V10): a token never used as a subject has only the latter.
+	ev.HadToken = hadEntry
+	// ErrKeyNotFound only when the ID had neither a key nor a vault entry:
+	// a token never used as a subject has only the latter.
 	if keyErr != nil && !hadEntry {
 		return keyErr
 	}
@@ -578,18 +527,18 @@ func (p *protector) Forget(ctx context.Context, subID string, opts ...func(*Forg
 // forgetVaultEntry applies Forget to the ID's vault entry, if the protector
 // has a token engine and the ID is a token. Graceful mode hides the entry and
 // removes its index entry, so the value no longer finds the token and the
-// same person tokenized again gets a new one (decision V3); the sealed value
+// same person tokenized again gets a new one; the sealed value
 // stays for Recover until the janitor's EraseForgotten. Immediate mode erases
 // it at once.
-func (p *protector) forgetVaultEntry(ctx context.Context, token string, graceful bool) (bool, error) {
-	if p.TokenEngine == nil {
+func (p *Protector) forgetVaultEntry(ctx context.Context, token string, graceful bool) (bool, error) {
+	if p.cfg.TokenEngine == nil {
 		return false, nil
 	}
 	var err error
 	if graceful {
-		err = p.TokenEngine.Forget(ctx, p.namespace, token, time.Now())
+		err = p.cfg.TokenEngine.Forget(ctx, p.namespace, token, time.Now())
 	} else {
-		err = p.TokenEngine.Erase(ctx, p.namespace, token)
+		err = p.cfg.TokenEngine.Erase(ctx, p.namespace, token)
 	}
 	switch {
 	case err == nil:
@@ -601,8 +550,8 @@ func (p *protector) forgetVaultEntry(ctx context.Context, token string, graceful
 	}
 }
 
-// Recover implements Protector.
-func (p *protector) Recover(ctx context.Context, subID string) (err error) {
+// recoverSubject implements Protector.Recover.
+func (p *Protector) recoverSubject(ctx context.Context, subID string) (err error) {
 	defer func() {
 		if err != nil {
 			if errors.Is(err, core.ErrKeyNotFound) {
@@ -624,7 +573,7 @@ func (p *protector) Recover(ctx context.Context, subID string) (err error) {
 		return
 	}
 
-	keyErr := p.KeyEngine.ReEnableKey(ctx, p.namespace, subID)
+	keyErr := p.cfg.KeyEngine.ReEnableKey(ctx, p.namespace, subID)
 	if keyErr != nil && !errors.Is(keyErr, core.ErrKeyNotFound) {
 		return keyErr
 	}
@@ -641,13 +590,13 @@ func (p *protector) Recover(ctx context.Context, subID string) (err error) {
 
 // restoreVaultEntry makes a forgotten vault entry active again. Its index entry
 // is recreated unless a newer token took the value meanwhile; the old data is
-// then recovered and the value stays with the newer token (decision V11). An
+// then recovered and the value stays with the newer token. An
 // erased entry cannot come back.
-func (p *protector) restoreVaultEntry(ctx context.Context, token string) (bool, error) {
-	if p.TokenEngine == nil {
+func (p *Protector) restoreVaultEntry(ctx context.Context, token string) (bool, error) {
+	if p.cfg.TokenEngine == nil {
 		return false, nil
 	}
-	_, err := p.TokenEngine.Restore(ctx, p.namespace, token)
+	_, err := p.cfg.TokenEngine.Restore(ctx, p.namespace, token)
 	switch {
 	case err == nil:
 		return true, nil
@@ -679,8 +628,8 @@ func (r keyRing) lookup(subjectID string) (core.Key, core.KeyState) {
 
 // encryptKeyRing gets or creates the keys of the struct subjects, and only
 // reads the keys of other subjects named by values already in wire format.
-func (p *protector) encryptKeyRing(ctx context.Context, structSubjects, valueSubjects []string) (keyRing, error) {
-	keys, err := p.KeyEngine.GetOrCreateKeys(ctx, p.namespace, structSubjects, p.Encryptor.KeyGen())
+func (p *Protector) encryptKeyRing(ctx context.Context, structSubjects, valueSubjects []string) (keyRing, error) {
+	keys, err := p.cfg.KeyEngine.GetOrCreateKeys(ctx, p.namespace, structSubjects, p.cfg.Encryptor.KeyGen())
 	if err != nil {
 		return keyRing{}, err
 	}
@@ -702,7 +651,7 @@ func (p *protector) encryptKeyRing(ctx context.Context, structSubjects, valueSub
 	if len(others) == 0 {
 		return ring, nil
 	}
-	otherKeys, states, err := p.KeyEngine.GetKeys(ctx, p.namespace, others)
+	otherKeys, states, err := p.cfg.KeyEngine.GetKeys(ctx, p.namespace, others)
 	if err != nil {
 		zeroKeyMap(keys)
 		return keyRing{}, err
@@ -739,10 +688,10 @@ func collectValueSubjects(structs []sensitive.Struct) ([]string, error) {
 // openValue checks a parsed value's header and, when its subject's key is
 // active, decrypts it. It returns the subject's key state; plaintext is set
 // only for StateActive. A value that does not authenticate is an error.
-func (p *protector) openValue(fr sensitive.FieldReplace, wv wireValue, ring keyRing) (plain []byte, state core.KeyState, err error) {
+func (p *Protector) openValue(fr sensitive.FieldReplace, wv wireValue, ring keyRing) (plain []byte, state core.KeyState, err error) {
 	// Checked before the key lookup: a value this protector cannot read is an
 	// error whatever its subject's state.
-	if wv.alg != p.Encryptor.Algorithm() {
+	if wv.alg != p.cfg.Encryptor.Algorithm() {
 		return nil, "", fmt.Errorf("%w: unsupported algorithm %#x at %s", ErrInvalidWireFormat, wv.alg, fr.Path)
 	}
 	if wv.keyVersion != subjectKeyVersion {
@@ -756,7 +705,7 @@ func (p *protector) openValue(fr sensitive.FieldReplace, wv wireValue, ring keyR
 	if state != core.StateActive {
 		return nil, state, nil
 	}
-	plain, err = p.Encryptor.Decrypt(p.subjectBinding(), key, wv.ciphertext)
+	plain, err = p.cfg.Encryptor.Decrypt(p.subjectBinding(), key, wv.ciphertext)
 	if err != nil {
 		return nil, state, fmt.Errorf("%w at %s", err, fr.Path)
 	}
@@ -764,11 +713,11 @@ func (p *protector) openValue(fr sensitive.FieldReplace, wv wireValue, ring keyR
 }
 
 // checkEncrypted decides whether Encrypt may keep a value already in wire
-// format (PE-05, decision D-C):
+// format:
 //   - active key and it authenticates: keep;
 //   - forgotten subject: keep, it is a shredded value;
 //   - anything else: error, never re-encrypt a look-alike.
-func (p *protector) checkEncrypted(fr sensitive.FieldReplace, wv wireValue, ring keyRing) error {
+func (p *Protector) checkEncrypted(fr sensitive.FieldReplace, wv wireValue, ring keyRing) error {
 	plain, state, err := p.openValue(fr, wv, ring)
 	clear(plain)
 	switch {
@@ -782,18 +731,18 @@ func (p *protector) checkEncrypted(fr sensitive.FieldReplace, wv wireValue, ring
 }
 
 // forgottenValue is the placeholder for a field whose subject is forgotten.
-func (p *protector) forgottenValue(fr sensitive.FieldReplace) string {
+func (p *Protector) forgottenValue(fr sensitive.FieldReplace) string {
 	if v, ok := fr.Options["replace"]; ok {
 		return v
 	}
-	return p.ForgottenValue
+	return p.cfg.ForgottenValue
 }
 
 // subjectKey returns the subject's active key for the stream and derivation
 // methods: ErrSubjectForgotten if it is disabled or deleted, ErrKeyUnknown
 // if the engine has no record of it.
-func (p *protector) subjectKey(ctx context.Context, subID string) (core.Key, error) {
-	keys, states, err := p.KeyEngine.GetKeys(ctx, p.namespace, []string{subID})
+func (p *Protector) subjectKey(ctx context.Context, subID string) (core.Key, error) {
+	keys, states, err := p.cfg.KeyEngine.GetKeys(ctx, p.namespace, []string{subID})
 	if err != nil {
 		return nil, err
 	}
@@ -809,13 +758,13 @@ func (p *protector) subjectKey(ctx context.Context, subID string) (core.Key, err
 }
 
 // subjectBinding binds data encrypted under a subject's DEK.
-func (p *protector) subjectBinding() core.Binding {
+func (p *Protector) subjectBinding() core.Binding {
 	return core.Binding{Namespace: p.namespace, KeyVersion: subjectKeyVersion}
 }
 
 // callerKeyBinding binds data encrypted under a key the caller manages
 // (the *WithKey stream methods), which has no version in the key engine.
-func (p *protector) callerKeyBinding() core.Binding {
+func (p *Protector) callerKeyBinding() core.Binding {
 	return core.Binding{Namespace: p.namespace}
 }
 
@@ -829,18 +778,17 @@ func zeroKeyMap(keys core.KeyMap) {
 	}
 }
 
-// Clear implements Protector.
-func (p *protector) Clear(ctx context.Context, force bool) (err error) {
+// Clear clears encryption materials' cache based on cache-related configuration.
+func (p *Protector) Clear(ctx context.Context, force bool) (err error) {
 	defer func() {
 		if err != nil {
 			err = ErrClearCacheFailure.
 				withBase(err).
-				withNamespace(p.namespace).
-				withSubject(p.namespace)
+				withNamespace(p.namespace)
 		}
 	}()
 
-	if cp, ok := p.KeyEngine.(core.KeyEngineCache); ok {
+	if cp, ok := p.cfg.KeyEngine.(core.KeyEngineCache); ok {
 		if e := cp.ClearCache(ctx, p.namespace, force); e != nil {
 			err = e
 		}
@@ -849,8 +797,8 @@ func (p *protector) Clear(ctx context.Context, force bool) (err error) {
 	return
 }
 
-// Purge implements Protector.
-func (p *protector) Purge(ctx context.Context) (err error) {
+// purge implements Protector.Purge.
+func (p *Protector) purge(ctx context.Context) (err error) {
 	defer func() {
 		if err != nil {
 			err = ErrPurgeNamespaceFailure.
@@ -859,12 +807,12 @@ func (p *protector) Purge(ctx context.Context) (err error) {
 		}
 	}()
 
-	if err = p.KeyEngine.PurgeNamespace(ctx, p.namespace); err != nil {
+	if err = p.cfg.KeyEngine.PurgeNamespace(ctx, p.namespace); err != nil {
 		return
 	}
 
-	if p.TokenEngine != nil {
-		if err = p.TokenEngine.PurgeNamespace(ctx, p.namespace); err != nil {
+	if p.cfg.TokenEngine != nil {
+		if err = p.cfg.TokenEngine.PurgeNamespace(ctx, p.namespace); err != nil {
 			return
 		}
 	}

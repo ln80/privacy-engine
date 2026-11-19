@@ -127,7 +127,7 @@ func TestStreamSegmentsIndependentOfSourceReads(t *testing.T) {
 	}
 }
 
-// PE-02 regression: cutting the stream anywhere, including at a segment
+// Regression: cutting the stream anywhere, including at a segment
 // boundary and right after the header, must fail.
 func TestStreamTruncationDetected(t *testing.T) {
 	key := testKey(t)
@@ -253,7 +253,7 @@ func TestStreamPropagatesSourceError(t *testing.T) {
 	}
 }
 
-// PE-19 regression: abandoned streams hold no goroutine.
+// Regression: abandoned streams hold no goroutine.
 func TestStreamAbandonedLeaksNoGoroutine(t *testing.T) {
 	enc := New256GCMEncryptor()
 	key := testKey(t)

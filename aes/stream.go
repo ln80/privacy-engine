@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 
@@ -128,10 +129,10 @@ type streamEncrypter struct {
 
 func newStreamEncrypter(binding core.Binding, key core.Key, r io.Reader, segSize int) (io.Reader, error) {
 	if err := validateAES256Key(key); err != nil {
-		return nil, errors.Join(core.ErrEncryptionFailure, err)
+		return nil, fmt.Errorf("%w: %w", core.ErrEncryptionFailure, err)
 	}
 	if segSize < minStreamSegmentSize || segSize > maxStreamSegmentSize {
-		return nil, errors.Join(core.ErrEncryptionFailure, errors.New("invalid stream segment size"))
+		return nil, fmt.Errorf("%w: invalid stream segment size", core.ErrEncryptionFailure)
 	}
 
 	header := make([]byte, streamHeaderSize)
@@ -140,11 +141,11 @@ func newStreamEncrypter(binding core.Binding, key core.Key, r io.Reader, segSize
 	binary.BigEndian.PutUint32(header[hdrKeyVersion:], binding.KeyVersion)
 	binary.BigEndian.PutUint32(header[hdrSegmentSize:], uint32(segSize)) // #nosec G115 -- bounded above
 	if _, err := io.ReadFull(rand.Reader, header[hdrSalt:]); err != nil {
-		return nil, errors.Join(core.ErrEncryptionFailure, err)
+		return nil, fmt.Errorf("%w: %w", core.ErrEncryptionFailure, err)
 	}
 	aead, err := streamAEAD(key, binding.Namespace, header[hdrSalt:hdrNoncePrefix])
 	if err != nil {
-		return nil, errors.Join(core.ErrEncryptionFailure, err)
+		return nil, fmt.Errorf("%w: %w", core.ErrEncryptionFailure, err)
 	}
 
 	return &streamEncrypter{
@@ -177,12 +178,12 @@ func (s *streamEncrypter) Read(p []byte) (int, error) {
 func (s *streamEncrypter) next() {
 	n, eof, err := fillSegment(s.src, s.buf, s.have)
 	if err != nil {
-		s.err = errors.Join(core.ErrEncryptionFailure, err)
+		s.err = fmt.Errorf("%w: %w", core.ErrEncryptionFailure, err)
 		return
 	}
 	final := eof
 	if !final && s.idx == math.MaxUint32 {
-		s.err = errors.Join(core.ErrEncryptionFailure, errStreamTooLong)
+		s.err = fmt.Errorf("%w: %w", core.ErrEncryptionFailure, errStreamTooLong)
 		return
 	}
 
@@ -224,27 +225,27 @@ type streamDecrypter struct {
 
 func newStreamDecrypter(binding core.Binding, key core.Key, r io.Reader) (io.Reader, error) {
 	if err := validateAES256Key(key); err != nil {
-		return nil, errors.Join(core.ErrDecryptionFailure, err)
+		return nil, fmt.Errorf("%w: %w", core.ErrDecryptionFailure, err)
 	}
 
 	header := make([]byte, streamHeaderSize)
 	if _, err := io.ReadFull(r, header); err != nil {
-		return nil, errors.Join(core.ErrDecryptionFailure, errStreamHeader, err)
+		return nil, fmt.Errorf("%w: %w: %w", core.ErrDecryptionFailure, errStreamHeader, err)
 	}
 	if header[0] != streamVersion || header[1] != streamAlgAES256GCMHKDF {
-		return nil, errors.Join(core.ErrDecryptionFailure, errStreamHeader, errors.New("unsupported version or algorithm"))
+		return nil, fmt.Errorf("%w: %w: unsupported version or algorithm", core.ErrDecryptionFailure, errStreamHeader)
 	}
 	if binary.BigEndian.Uint32(header[hdrKeyVersion:]) != binding.KeyVersion {
-		return nil, errors.Join(core.ErrDecryptionFailure, errStreamHeader, errors.New("key version mismatch"))
+		return nil, fmt.Errorf("%w: %w: key version mismatch", core.ErrDecryptionFailure, errStreamHeader)
 	}
 	segSize := int(binary.BigEndian.Uint32(header[hdrSegmentSize:]))
 	if segSize < minStreamSegmentSize || segSize > maxStreamSegmentSize {
-		return nil, errors.Join(core.ErrDecryptionFailure, errStreamHeader, errors.New("segment size out of range"))
+		return nil, fmt.Errorf("%w: %w: segment size out of range", core.ErrDecryptionFailure, errStreamHeader)
 	}
 
 	aead, err := streamAEAD(key, binding.Namespace, header[hdrSalt:hdrNoncePrefix])
 	if err != nil {
-		return nil, errors.Join(core.ErrDecryptionFailure, err)
+		return nil, fmt.Errorf("%w: %w", core.ErrDecryptionFailure, err)
 	}
 
 	cSegSize := segSize + streamTagSize
@@ -277,12 +278,12 @@ func (s *streamDecrypter) Read(p []byte) (int, error) {
 func (s *streamDecrypter) next() {
 	n, eof, err := fillSegment(s.src, s.buf, s.have)
 	if err != nil {
-		s.err = errors.Join(core.ErrDecryptionFailure, err)
+		s.err = fmt.Errorf("%w: %w", core.ErrDecryptionFailure, err)
 		return
 	}
 	final := eof
 	if !final && s.idx == math.MaxUint32 {
-		s.err = errors.Join(core.ErrDecryptionFailure, errStreamTooLong)
+		s.err = fmt.Errorf("%w: %w", core.ErrDecryptionFailure, errStreamTooLong)
 		return
 	}
 
@@ -291,12 +292,12 @@ func (s *streamDecrypter) next() {
 		sealed = s.buf[:s.cSegSize]
 	}
 	if len(sealed) < streamTagSize {
-		s.err = errors.Join(core.ErrDecryptionFailure, errStreamAuth)
+		s.err = fmt.Errorf("%w: %w", core.ErrDecryptionFailure, errStreamAuth)
 		return
 	}
 	plain, err := s.aead.Open(s.obuf[:0], segmentNonce(s.noncePrefix, s.idx, final), sealed, s.header)
 	if err != nil {
-		s.err = errors.Join(core.ErrDecryptionFailure, errStreamAuth)
+		s.err = fmt.Errorf("%w: %w", core.ErrDecryptionFailure, errStreamAuth)
 		return
 	}
 	s.out = plain

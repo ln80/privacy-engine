@@ -11,7 +11,7 @@ import (
 type FactoryClearFunc func()
 
 // FactoryNewFunc is used by the Factory service to create Protector instance per namespace.
-type FactoryNewFunc func(namespace string) Protector
+type FactoryNewFunc func(namespace string) *Protector
 
 // Factory manages and maintains a registry of Protector services.
 //
@@ -20,7 +20,7 @@ type FactoryNewFunc func(namespace string) Protector
 type Factory interface {
 
 	// Instance creates a new Protector instance for the given namespace or returns the existing one.
-	Instance(namespace string) (Protector, FactoryClearFunc)
+	Instance(namespace string) (*Protector, FactoryClearFunc)
 
 	// Monitor starts a long-running process in a separate Goroutine.
 	// It checks Protectors' activities and removes inactive ones,
@@ -39,7 +39,7 @@ type FactoryConfig struct {
 }
 
 type registryEntry struct {
-	protector  Protector
+	protector  *Protector
 	lastUsedAt time.Time
 }
 
@@ -53,7 +53,7 @@ type factory struct {
 // NewFactory returns a thread-safe factory service instance.
 // It panics if builderFunc is nil.
 // Options params allow overwriting the default configuration.
-func NewFactory(newProt FactoryNewFunc, opts ...func(*FactoryConfig)) Factory {
+func NewFactory(newProt FactoryNewFunc, opts ...FactoryOption) Factory {
 	if newProt == nil {
 		panic("invalid new Protector func, nil value found")
 	}
@@ -78,7 +78,7 @@ func NewFactory(newProt FactoryNewFunc, opts ...func(*FactoryConfig)) Factory {
 }
 
 // Instance implements Factory interface
-func (f *factory) Instance(namespace string) (Protector, FactoryClearFunc) {
+func (f *factory) Instance(namespace string) (*Protector, FactoryClearFunc) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -94,7 +94,7 @@ func (f *factory) Instance(namespace string) (Protector, FactoryClearFunc) {
 
 	// The clear func keeps the protector it was handed out with. It must not
 	// read the registry: Monitor may have evicted the entry by the time it runs
-	// (a nil dereference), and the read would race with the map (PE-07).
+	// (a nil dereference), and the read would race with the map.
 	// Clearing an evicted protector is harmless: it only wipes its own cache.
 	prot := entry.protector
 	clearFunc := func() {

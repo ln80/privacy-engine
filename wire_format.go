@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -88,25 +89,25 @@ func parseWireValue(str string) (v wireValue, err error) {
 		return v, ErrInvalidWireFormat
 	}
 	if wireEncoding.EncodedLen(maxWireSubjectID) < len(encSubject) {
-		return v, errors.Join(ErrInvalidWireFormat, errors.New("subject id too long"))
+		return v, fmt.Errorf("%w: subject id too long", ErrInvalidWireFormat)
 	}
 
 	subject, err := wireEncoding.DecodeString(encSubject)
 	if err != nil {
-		return v, errors.Join(ErrInvalidWireFormat, err)
+		return v, fmt.Errorf("%w: %w", ErrInvalidWireFormat, err)
 	}
 	if len(subject) == 0 || len(subject) > maxWireSubjectID {
-		return v, errors.Join(ErrInvalidWireFormat, errors.New("subject id length out of range"))
+		return v, fmt.Errorf("%w: subject id length out of range", ErrInvalidWireFormat)
 	}
 
 	payload, err := wireEncoding.DecodeString(encPayload)
 	if err != nil {
-		return v, errors.Join(ErrInvalidWireFormat, err)
+		return v, fmt.Errorf("%w: %w", ErrInvalidWireFormat, err)
 	}
 	// The header must be followed by a ciphertext; the Encryptor checks its own
-	// minimum length (nonce + tag for AES-256-GCM, PE-03).
+	// minimum length (nonce + tag for AES-256-GCM).
 	if len(payload) <= wireHeaderSize {
-		return v, errors.Join(ErrInvalidWireFormat, errors.New("payload too short"))
+		return v, fmt.Errorf("%w: payload too short", ErrInvalidWireFormat)
 	}
 
 	return wireValue{

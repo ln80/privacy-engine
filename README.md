@@ -89,9 +89,7 @@ Fields are tagged using `pii`, `sensitive`, or `sens` (interchangeable):
 By default `Encrypt` requires each record to use one subject, so forgetting that subject erases all of the record's personal data. A record whose data belongs to several subjects (for example an embedded author with its own `subjectID`) fails with struct-sensitive's `ErrMultipleSubjectID`. To allow it, encrypting each field under the nearest declared subject:
 
 ```go
-p := privacy.NewProtector("tenant", engine, func(pc *privacy.ProtectorConfig) {
-    pc.MultipleSubjects = true
-})
+p := privacy.NewProtector("tenant", engine, privacy.WithMultipleSubjects())
 ```
 
 `Decrypt` reads the subject from each value and accepts either.
@@ -109,7 +107,17 @@ p := privacy.NewProtector("tenant", engine, func(pc *privacy.ProtectorConfig) {
   └──────────┘    └────────────┘    └──────────────┘
 ```
 
-- **KeyEngine** manages encryption key lifecycle (create, get, disable, re-enable, delete). Implementations: in-memory (for tests), DynamoDB + KMS (production, see [privacy-engine.elastic](https://github.com/ln80/privacy-engine.elastic)).
+- **Protector** (`*privacy.Protector`, from `NewProtector`) is the main API. Code that needs only part of it can accept a role interface instead:
+
+  | Interface | Methods | Typical user |
+  |---|---|---|
+  | `Encrypter` | `Encrypt`, `Decrypt`, `EncryptStream`, `DecryptStream` | Repositories, event store decorators |
+  | `Shredder` | `Forget`, `Recover`, `DeleteToken`, `Purge` | Erasure and account-deletion flows |
+  | `Tokenizer` | `Tokenize` | Ingestion: create pseudonyms, never reveal them |
+  | `Reidentifier` | `Detokenize`, `ListTokens` | The few places that show values back |
+
+  Handing a service a `Tokenizer` rather than the `*Protector` makes least privilege visible in review and keeps test fakes small. It is not a security boundary: separate credentials are.
+- **KeyEngine** manages encryption key lifecycle (create, get, disable, re-enable, delete). The `memory` package provides one for tests; production backends implement the interface (see [Backends](#backends)).
 - **Encryptor** handles the actual encryption. Default: AES-256-GCM with random nonces; the AAD binds the namespace, the key version and the algorithm ID (`core.Binding`).
 - **TokenEngine** stores the token vault for pseudonymization: opaque sealed records and blind-index entries, never values in clear. Optional.
 
@@ -145,8 +153,8 @@ security boundary. KMS is optional.
 | `PurgeNamespace` (`Protector.Purge`) | Every token and the vault key are deleted |
 
 IDs starting with `@` are reserved for the library and refused as subject IDs
-and tokens. The full design is in privacy-engine.elastic
-`docs/token-vault-v2.md`.
+and tokens. The full design, and the contract a `TokenEngine` must follow, is
+in [docs/token-vault.md](docs/token-vault.md).
 
 ## Streaming Encryption
 
@@ -176,7 +184,7 @@ nothing.
 For multi-tenant applications, use the Factory to manage one Protector per namespace:
 
 ```go
-factory := privacy.NewFactory(func(namespace string) privacy.Protector {
+factory := privacy.NewFactory(func(namespace string) *privacy.Protector {
     return privacy.NewProtector(namespace, keyEngine, opts...)
 })
 
@@ -189,19 +197,72 @@ defer clearFn()
 
 ## Configuration
 
-`NewProtector` accepts functional options:
+`NewProtector` accepts options:
+
+```go
+p := privacy.NewProtector("tenant", keyEngine,
+    privacy.WithTokenEngine(tokenEngine),
+    privacy.WithCacheTTL(30*time.Second),
+    privacy.WithAuditor(auditor),
+)
+```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `CacheEnabled` | `true` | Wrap the key engine with an in-memory TTL cache (the token engine is not cached; the vault key is cached with the other keys) |
-| `CacheTTL` | `20s` | Cache time-to-live |
-| `GracefulMode` | `true` | Disable keys before deleting (allows recovery). `Forget(id, Immediately())` overrides it for one call |
-| `Encryptor` | AES-256-GCM | Encryption algorithm |
-| `TokenEngine` | `nil` | Token engine for pseudonymization |
+| `WithCacheTTL(d)` / `WithoutCache()` | cache on, `20s` | Cache keys in memory (the token engine is not cached; the vault key is cached with the other keys). The TTL bounds erasure latency across instances: a subject forgotten elsewhere stops decrypting here within it |
+| `WithImmediateErasure()` | graceful | Every `Forget` erases at once, with no recovery. By default keys are disabled first and recoverable for the grace period; `Forget(id, Immediately())` erases at once for one call |
+| `WithTokenEngine(e)` | none | Token engine for pseudonymization |
+| `WithAuditor(a)` | none | Receives an audit event for erasures and re-identifications (see [Audit events](#audit-events)) |
+| `WithMultipleSubjects()` | off | Allow several subjects per struct (see above) |
+| `WithForgottenValue(v)` | `""` | Value of a forgotten field whose tag has no `replace=` |
+| `WithEncryptor(e)` | AES-256-GCM | Encryption algorithm |
 
-## Production Backend
+An option is a `func(*privacy.ProtectorConfig)`, so a closure that sets
+`ProtectorConfig` fields works as well. `NewFactory` takes `WithIdleTimeout`
+and `WithMonitorPeriod`; the in-memory key engine takes
+`memory.WithGracePeriod`.
 
-See [privacy-engine.elastic](https://github.com/ln80/privacy-engine.elastic) for a serverless implementation using AWS DynamoDB (key/token storage) and KMS (master key management), deployable via SAM.
+## Backends
+
+The `memory` package holds in-memory `KeyEngine` and `TokenEngine` implementations for tests. For production, implement the interfaces in `core` against your store and run the conformance suites in `privacytest` against it:
+
+```go
+func TestMyKeyEngine(t *testing.T) {
+    privacytest.RunKeyEngineTest(t, ctx, mystore.NewKeyEngine(...), func(c *privacytest.KeyEngineTestConfig) {
+        c.GracePeriod = 2 * time.Second
+    })
+}
+
+func TestMyTokenEngine(t *testing.T) {
+    privacytest.RunTokenEngineTest(t, ctx, mystore.NewTokenEngine(...))
+}
+```
+
+A production key engine should wrap data keys with a key encryption key held outside the store (a KMS or HSM): crypto-shredding and the token vault are only as strong as the key engine. Graceful `Forget` completes when the grace period ends: either the engine erases by itself (a storage TTL), or a scheduled job calls `KeyEngine.DeleteUnusedKeys` and `TokenEngine.EraseForgotten`.
+
+## Audit events
+
+Erasure and re-identification must be provable (GDPR Art. 5(2) and 17). Set an
+`Auditor` and the protector hands it one `AuditEvent` per call of `Forget`,
+`Recover`, `DeleteToken`, `Purge`, `Detokenize`, `ListTokens` and
+`DeriveSubjectKey`, successful or not. Events never carry values or keys;
+the actor and the reason come from your `ctx`.
+
+```go
+p := privacy.NewProtector("tenant", engine, privacy.WithAuditor(
+    privacy.AuditorFunc(func(ctx context.Context, e privacy.AuditEvent) error {
+        slog.InfoContext(ctx, "privacy audit", "op", e.Op, "subject", e.Subject,
+            "final_at", e.FinalAt, "revealed", len(e.Revealed), "err", e.Err)
+        return nil
+    }),
+))
+```
+
+A Forget event says when erasure is final (`FinalAt`), from the grace period
+the engines report through `core.GracePeriodReporter`. If the auditor fails,
+`Detokenize`, `ListTokens` and `DeriveSubjectKey` return nothing; the other
+calls are applied and return `ErrAuditFailure`, so retry them. The full
+design is in [docs/audit-events.md](docs/audit-events.md).
 
 ## Wire Format
 

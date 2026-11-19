@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 
@@ -15,8 +16,7 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
-// Token vault v2 cryptography (privacy-engine.elastic docs/token-vault-v2.md,
-// section 4). One DEK per namespace, kept by the key engine under the reserved
+// Token vault cryptography (docs/token-vault.md, section 3). One DEK per namespace, kept by the key engine under the reserved
 // ID "@vault", gives two derived keys:
 //
 //	indexKey = HKDF-SHA256(vaultDEK, info = "privacy-engine/vault/index/v1")
@@ -149,7 +149,7 @@ func (k vaultKeys) open(namespace, token string, sealed []byte) ([]byte, error) 
 	}
 	plain, err := aead.Open(nil, sealed[1:1+vaultNonceSize], sealed[1+vaultNonceSize:], aad)
 	if err != nil {
-		return nil, errVaultSealed
+		return nil, fmt.Errorf("%w: %w", core.ErrDecryptionFailure, errVaultSealed)
 	}
 	return plain, nil
 }

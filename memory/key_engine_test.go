@@ -16,9 +16,11 @@ func TestKeyEngine(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("in-memory engine", func(t *testing.T) {
-		eng := NewKeyEngine()
+		grace := 200 * time.Millisecond
+		eng := NewKeyEngine(func(c *core.KeyEngineConfig) { c.GracePeriod = grace })
 
 		privacytest.RunKeyEngineTest(t, ctx, eng, func(c *privacytest.KeyEngineTestConfig) {
+			c.GracePeriod = grace
 			c.KeyMaterialProbe = func(_ context.Context, ns, keyID string) (bool, error) {
 				e := eng.(*engine)
 				e.mu.Lock()
@@ -209,7 +211,7 @@ func TestCacheWrapperReportsOriginStates(t *testing.T) {
 	}
 }
 
-// PE-04 regression: once the origin succeeds, the cache wrapper reports
+// Regression: once the origin succeeds, the cache wrapper reports
 // success whether or not it holds the key, and never serves a stale state.
 func TestCacheWrapperDisableReEnableFollowOrigin(t *testing.T) {
 	ctx := context.Background()
@@ -279,5 +281,115 @@ func TestCacheWrapperDisableReEnableFollowOrigin(t *testing.T) {
 	}
 	if err := wrapper.ReEnableKey(ctx, namespace, keyID); !errors.Is(err, core.ErrKeyNotFound) {
 		t.Fatalf("ReEnableKey of a deleted key: expect ErrKeyNotFound, got %v", err)
+	}
+}
+
+// A key forgotten through another instance must stop being served once the
+// cache TTL has passed, without anyone calling ClearCache: the TTL is the
+// erasure latency bound across instances.
+func TestCacheWrapperDoesNotServeExpiredKeys(t *testing.T) {
+	ctx := context.Background()
+	origin := NewKeyEngine()
+	if _, err := origin.GetOrCreateKeys(ctx, "ns", []string{"s"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	ttl := 50 * time.Millisecond
+	cache := NewCacheWrapper(origin, ttl)
+	keys, _, err := cache.GetKeys(ctx, "ns", []string{"s"})
+	if err != nil || keys["s"] == nil {
+		t.Fatalf("expect a cached key, got %v, %v", keys, err)
+	}
+
+	// Another instance forgets the subject in the origin.
+	if err := origin.DisableKey(ctx, "ns", "s"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * ttl)
+
+	keys, missing, err := cache.GetKeys(ctx, "ns", []string{"s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keys["s"] != nil || missing["s"] != core.StateDisabled {
+		t.Fatalf("expect DISABLED after TTL, got keys=%v missing=%v", keys.KeyIDs(), missing)
+	}
+}
+
+// Concurrent GetOrCreateKeys calls for a fresh subject must all return the
+// same key: a caller that lost the race used to get no key, which the
+// protector reads as a forgotten subject.
+func TestStoreGetOrCreateKeysConcurrentFreshSubject(t *testing.T) {
+	ctx := context.Background()
+	for range 200 {
+		eng := NewKeyEngine()
+		var wg sync.WaitGroup
+		got := make([]core.Key, 8)
+		for i := range got {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				keys, err := eng.GetOrCreateKeys(ctx, "ns", []string{"s"}, nil)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				got[i] = keys["s"]
+			}()
+		}
+		wg.Wait()
+		for i, k := range got {
+			if len(k) == 0 {
+				t.Fatalf("caller %d got no key for a fresh subject", i)
+			}
+			if !bytes.Equal(k, got[0]) {
+				t.Fatalf("caller %d got a different key", i)
+			}
+		}
+	}
+}
+
+// The store reports a key disabled longer than the grace period as DELETED
+// and refuses to re-enable it even before DeleteUnusedKeys runs, keeps the
+// first disable time, and keeps a key recoverable within the period.
+func TestStoreGracePeriodWithoutJanitor(t *testing.T) {
+	ctx := context.Background()
+	grace := 100 * time.Millisecond
+	eng := NewKeyEngine(func(c *core.KeyEngineConfig) { c.GracePeriod = grace })
+	if _, err := eng.GetOrCreateKeys(ctx, "ns", []string{"a", "b"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"a", "b"} {
+		if err := eng.DisableKey(ctx, "ns", id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Within the period: recoverable.
+	if err := eng.ReEnableKey(ctx, "ns", "a"); err != nil {
+		t.Fatalf("expect re-enable within grace period, got %v", err)
+	}
+
+	time.Sleep(grace / 2)
+	// A second disable must not restart the period.
+	if err := eng.DisableKey(ctx, "ns", "b"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(grace/2 + 10*time.Millisecond)
+
+	_, missing, err := eng.GetKeys(ctx, "ns", []string{"b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missing["b"] != core.StateDeleted {
+		t.Fatalf("expect DELETED past grace period, got %v", missing["b"])
+	}
+	if err := eng.ReEnableKey(ctx, "ns", "b"); !errors.Is(err, core.ErrKeyNotFound) {
+		t.Fatalf("expect ErrKeyNotFound past grace period, got %v", err)
+	}
+}
+
+func TestStoreDefaultGracePeriod(t *testing.T) {
+	e := NewKeyEngine(func(c *core.KeyEngineConfig) { c.GracePeriod = 0 }).(*engine)
+	if want := core.NewKeyEngineConfig().GracePeriod; e.gracePeriod != want {
+		t.Fatalf("expect default grace period %v, got %v", want, e.gracePeriod)
 	}
 }

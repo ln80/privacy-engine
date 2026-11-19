@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// PE-09 regression: keys and token data never print their value.
+// Regression: keys and token data never print their value.
 
 var (
 	secretKey  = Key(bytes.Repeat([]byte{0xAB}, 32))

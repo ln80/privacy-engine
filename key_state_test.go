@@ -11,14 +11,14 @@ import (
 )
 
 // Step 5 of wire format v2: Encrypt keeps an existing value only when it
-// authenticates (PE-05), and Decrypt acts on the key state (PE-10).
+// authenticates, and Decrypt acts on the key state.
 
-func newStateProtector(ns string, eng core.KeyEngine, opts ...func(*ProtectorConfig)) Protector {
+func newStateProtector(ns string, eng core.KeyEngine, opts ...func(*ProtectorConfig)) *Protector {
 	opts = append([]func(*ProtectorConfig){func(pc *ProtectorConfig) { pc.CacheEnabled = false }}, opts...)
 	return NewProtector(ns, eng, opts...)
 }
 
-func encryptedProfile(t *testing.T, p Protector, subject string) *Profile {
+func encryptedProfile(t *testing.T, p *Protector, subject string) *Profile {
 	t.Helper()
 	pf := &Profile{UserID: subject, Fullname: "Alice Doe", Gender: "F", Address: Address{Street: "1 Main St"}}
 	if err := p.Encrypt(context.Background(), pf); err != nil {
@@ -27,7 +27,7 @@ func encryptedProfile(t *testing.T, p Protector, subject string) *Profile {
 	return pf
 }
 
-// PE-10: data read in the wrong namespace is an error, never a silent wipe.
+// Data read in the wrong namespace is an error, never a silent wipe.
 func TestDecrypt_WrongNamespaceIsAnError(t *testing.T) {
 	ctx := context.Background()
 	eng := memory.NewKeyEngine()
@@ -127,7 +127,7 @@ func TestUnknownSubjectValue(t *testing.T) {
 	}
 }
 
-// PE-05: input that merely looks encrypted is refused, not stored as is.
+// Input that merely looks encrypted is refused, not stored as is.
 func TestEncrypt_LookAlikeValueIsRefused(t *testing.T) {
 	ctx := context.Background()
 	p := newStateProtector("tenant-pe05", memory.NewKeyEngine())
@@ -286,5 +286,27 @@ func TestKeyStateErrorsDoNotLeak(t *testing.T) {
 	var perr Error
 	if !errors.As(err, &perr) || perr.Subject() != "secret-subject-id" {
 		t.Fatalf("expect the subject available through Error.Subject, got %v", err)
+	}
+}
+
+// failingCache is a key engine cache whose ClearCache fails.
+type failingCache struct{ core.KeyEngineCache }
+
+func (failingCache) ClearCache(context.Context, string, bool) error {
+	return errors.New("clear failed")
+}
+
+// A Clear error names the namespace only: it concerns no subject.
+func TestClearErrorHasNoSubject(t *testing.T) {
+	eng := failingCache{memory.NewKeyEngine().(core.KeyEngineCache)}
+	p := NewProtector("tenant-x", eng)
+
+	err := p.Clear(context.Background(), true)
+	var perr Error
+	if !errors.Is(err, ErrClearCacheFailure) || !errors.As(err, &perr) {
+		t.Fatalf("expect ErrClearCacheFailure, got %v", err)
+	}
+	if perr.Subject() != "" || perr.Namespace() != "tenant-x" {
+		t.Fatalf("expect namespace only, got subject=%q namespace=%q", perr.Subject(), perr.Namespace())
 	}
 }

@@ -103,7 +103,7 @@ type TokenizeConfig struct {
 
 	// TokenGenFunc generates the random part of a new token. It does not
 	// receive the value: a token must never be derived from it, as hashed
-	// emails can be reversed by brute force (PX-23).
+	// emails can be reversed by brute force.
 	TokenGenFunc func(ctx context.Context, namespace string) (string, error)
 }
 

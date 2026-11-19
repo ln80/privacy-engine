@@ -10,7 +10,7 @@ import (
 	"github.com/ln80/privacy-engine/memory"
 )
 
-// viewer is a doconvoy-like record: a sub_ token is the subject of its data.
+// viewer is a record whose subject is a sub_ token, as a tokenized user's would be.
 type viewer struct {
 	Token string `pii:"subjectID"`
 	Note  string `pii:"data"`
@@ -21,7 +21,7 @@ type lifecycle struct {
 	ctx    context.Context
 	keys   core.KeyEngine
 	tokens *memory.TokenEngine
-	p      Protector
+	p      *Protector
 }
 
 func newLifecycle(t *testing.T, graceful bool) *lifecycle {
@@ -239,8 +239,8 @@ func TestForget_TokenWithoutKey(t *testing.T) {
 	}
 }
 
-// An ID with neither a key nor a vault entry still reports ErrKeyNotFound, as
-// doconvoy's erasure.Forget expects.
+// An ID with neither a key nor a vault entry still reports ErrKeyNotFound, so
+// callers can tell a mistyped ID from a forgotten one.
 func TestForget_UnknownID(t *testing.T) {
 	l := newLifecycle(t, true)
 	if err := l.p.Forget(l.ctx, "sub_unknown"); !errors.Is(err, core.ErrKeyNotFound) {

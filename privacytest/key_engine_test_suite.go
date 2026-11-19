@@ -67,7 +67,7 @@ func RunKeyEngineTest(t *testing.T, ctx context.Context, eng core.KeyEngine, opt
 	}
 	assertMissing(t, missing, core.KeyStates{neverSeen: core.StateUnknown})
 
-	// Unknown subjects (decision E1): DisableKey and ReEnableKey report
+	// Unknown subjects: DisableKey and ReEnableKey report
 	// ErrKeyNotFound, DeleteKey succeeds, and none of them creates a record.
 	if err := eng.DisableKey(ctx, namespace, neverSeen); !errors.Is(err, core.ErrKeyNotFound) {
 		t.Fatalf("DisableKey of an unknown subject: expect ErrKeyNotFound, got: %v", err)
@@ -300,7 +300,7 @@ func RunKeyEngineTest(t *testing.T, ctx context.Context, eng core.KeyEngine, opt
 		t.Fatalf("expect %v, %v be equals", want, got)
 	}
 
-	// Cache engines (PE-04): once the cache no longer holds a key, DisableKey
+	// Cache engines: once the cache no longer holds a key, DisableKey
 	// and ReEnableKey still report the origin's result, and reads follow it.
 	if cache, ok := eng.(core.KeyEngineCache); ok && cache.Origin() != nil {
 		cacheNS := namespace + "-cache"

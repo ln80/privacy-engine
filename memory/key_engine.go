@@ -3,7 +3,6 @@ package memory
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -17,17 +16,21 @@ const (
 )
 
 type keyCache struct {
-	ID    string
-	Key   core.Key
-	At    int64
+	ID  string
+	Key core.Key
+	// At is when the cache stored the entry. A cache entry older than the
+	// TTL is not served.
+	At    time.Time
 	State core.KeyState
+	// DisabledAt is when the store disabled the key; zero unless disabled.
+	DisabledAt time.Time
 }
 
 func newKeyCache(id string, key core.Key) keyCache {
 	return keyCache{
 		ID:    id,
 		Key:   key,
-		At:    time.Now().Unix(),
+		At:    time.Now(),
 		State: core.StateActive,
 	}
 }
@@ -55,23 +58,67 @@ type engine struct {
 	mu    sync.RWMutex
 
 	ttl time.Duration
+
+	// gracePeriod applies to the store (origin == nil) only.
+	gracePeriod time.Duration
 }
 
 var _ core.KeyEngine = &engine{}
 var _ core.KeyEngineCache = &engine{}
+var _ core.GracePeriodReporter = &engine{}
+
+// WithGracePeriod sets how long a key disabled by a graceful Forget stays
+// recoverable (default 7 days). Zero or less keeps the default.
+func WithGracePeriod(d time.Duration) func(*core.KeyEngineConfig) {
+	return func(c *core.KeyEngineConfig) { c.GracePeriod = d }
+}
 
 // NewKeyEngine returns an in-memory core.KeyEngine implementation,
 // and is mainly used for tests.
-func NewKeyEngine() core.KeyEngine {
-	return &engine{
-		cache: make(map[string]map[string]keyCache),
+//
+// A key disabled for longer than the grace period (core.NewKeyEngineConfig,
+// 7 days by default) is reported DELETED and cannot be re-enabled;
+// DeleteUnusedKeys wipes its material. A zero or negative GracePeriod keeps
+// the default.
+func NewKeyEngine(opts ...func(*core.KeyEngineConfig)) core.KeyEngine {
+	cfg := core.NewKeyEngineConfig()
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
 	}
+	if cfg.GracePeriod <= 0 {
+		cfg.GracePeriod = core.NewKeyEngineConfig().GracePeriod
+	}
+	return &engine{
+		cache:       make(map[string]map[string]keyCache),
+		gracePeriod: cfg.GracePeriod,
+	}
+}
+
+// pastGrace reports whether the store disabled the key longer than the
+// grace period ago: it is then deleted, whether or not DeleteUnusedKeys ran.
+func (e *engine) pastGrace(k keyCache, now time.Time) bool {
+	return e.origin == nil && k.State == core.StateDisabled && now.Sub(k.DisabledAt) >= e.gracePeriod
+}
+
+// deleteEntry wipes an entry's key and marks it deleted. Caller holds e.mu.
+func deleteEntry(cache map[string]keyCache, keyID string) {
+	k := cache[keyID]
+	core.ZeroKey(k.Key)
+	k.Key = nil
+	k.State = core.StateDeleted
+	cache[keyID] = k
 }
 
 // NewCacheWrapper returns an in-memory cache wrapper on top of a given core.KeyEngine.
 //
 // It requires time-to-live duration for caching purpose,
 // and it will use a default TTL duration value if the given one is Zero.
+//
+// The TTL bounds erasure latency: a key disabled or deleted through another
+// instance (or directly in the origin) is served from this cache for at most
+// the TTL, then refetched. Changes made through this wrapper apply at once.
 //
 // Encryption Keys are sensitive information and should not be kept in memory for a long period.
 // However, caching may significantly reduce costs and network overhead.
@@ -117,13 +164,21 @@ func (e *engine) GetKeys(ctx context.Context, namespace string, keyIDs []string)
 	foundKeys := core.NewKeyMap()
 	missing := core.KeyStates{}
 	missedKeys := []string{}
+	now := time.Now()
 
 	e.mu.RLock()
 	for _, keyID := range keyIDs {
 		key, ok := cache[keyID]
+		if ok && e.origin != nil && e.expired(key, now) {
+			// An expired entry is a miss: the origin may have disabled or
+			// deleted the key since, from this or another instance.
+			ok = false
+		}
 		switch {
 		case ok && key.State == core.StateActive:
 			foundKeys[keyID] = cloneKey(key.Key)
+		case ok && e.pastGrace(key, now):
+			missing[keyID] = core.StateDeleted
 		case ok:
 			missing[keyID] = key.State
 		case e.origin != nil:
@@ -200,15 +255,19 @@ func (e *engine) GetOrCreateKeys(ctx context.Context, namespace string, keyIDs [
 
 	for _, keyID := range keyIDs {
 		if _, ok := keys[keyID]; !ok {
-			// only add new entry if key is a fresh new one.
-			// it may be disabled/deleted and still have record
-			if _, ok := cache[keyID]; ok {
+			// Only create a key for a fresh ID. Between GetKeys and this
+			// lock a concurrent call may have created it: return that key.
+			// A disabled or deleted record stays without a key.
+			if c, ok := cache[keyID]; ok {
+				if c.State == core.StateActive {
+					keys[keyID] = cloneKey(c.Key)
+				}
 				continue
 			}
 
 			newKey, err := keyGen(ctx, namespace, keyID)
 			if err != nil {
-				return nil, errors.Join(core.ErrPersistKeyFailure, err)
+				return nil, fmt.Errorf("%w: %w", core.ErrPersistKeyFailure, err)
 			}
 			k := core.Key(newKey)
 			putCachedKey(cache, keyID, cloneKey(k))
@@ -237,7 +296,7 @@ func (e *engine) invalidate(namespace, keyID string) {
 // DisableKey implements core.KeyEngine
 //
 // As a cache, the result is the origin's: once the origin succeeds, the cached
-// entry, present or not, cannot turn that success into an error (PE-04).
+// entry, present or not, cannot turn that success into an error.
 func (e *engine) DisableKey(ctx context.Context, namespace, keyID string) error {
 	if e.origin != nil {
 		if err := e.origin.DisableKey(ctx, namespace, keyID); err != nil {
@@ -259,11 +318,20 @@ func (e *engine) DisableKey(ctx context.Context, namespace, keyID string) error 
 		return core.ErrKeyNotFound
 	}
 
+	if e.pastGrace(keyCache, time.Now()) {
+		deleteEntry(cache, keyID)
+		keyCache = cache[keyID]
+	}
 	if keyCache.State == core.StateDeleted {
 		return fmt.Errorf("%w: hard deleted key", core.ErrKeyNotFound)
 	}
+	if keyCache.State == core.StateDisabled {
+		// Already disabled: the grace period runs from the first time.
+		return nil
+	}
 
 	keyCache.State = core.StateDisabled
+	keyCache.DisabledAt = time.Now()
 	cache[keyID] = keyCache
 
 	return nil
@@ -291,11 +359,16 @@ func (e *engine) ReEnableKey(ctx context.Context, namespace, keyID string) error
 		return core.ErrKeyNotFound
 	}
 
+	if e.pastGrace(keyCache, time.Now()) {
+		deleteEntry(cache, keyID)
+		keyCache = cache[keyID]
+	}
 	if keyCache.State == core.StateDeleted {
 		return fmt.Errorf("%w: hard deleted key", core.ErrKeyNotFound)
 	}
 
 	keyCache.State = core.StateActive
+	keyCache.DisabledAt = time.Time{}
 	cache[keyID] = keyCache
 
 	return nil
@@ -314,20 +387,20 @@ func (e *engine) DeleteKey(ctx context.Context, namespace, keyID string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	keyCache, ok := cache[keyID]
-	if !ok {
-		return nil
+	if _, ok := cache[keyID]; ok {
+		deleteEntry(cache, keyID)
 	}
-
-	core.ZeroKey(keyCache.Key)
-	keyCache.Key = nil
-	keyCache.State = core.StateDeleted
-	cache[keyID] = keyCache
-
 	return nil
 }
 
-// DeleteKey implements core.KeyEngineCache
+// expired reports whether a cache entry is older than the TTL.
+func (e *engine) expired(k keyCache, now time.Time) bool {
+	return now.Sub(k.At) >= e.ttl
+}
+
+// ClearCache implements core.KeyEngineCache. It wipes the expired entries,
+// or every entry with force. Reads never serve an expired entry whether or
+// not ClearCache runs: it only frees memory sooner.
 func (e *engine) ClearCache(ctx context.Context, namespace string, force bool) error {
 	// if origin is empty then the engine acts as a store aka basic key engine.
 	// therefore silently ignore clear cache operation.
@@ -344,8 +417,9 @@ func (e *engine) ClearCache(ctx context.Context, namespace string, force bool) e
 		return nil
 	}
 
+	now := time.Now()
 	for keyID, k := range cache {
-		if expired := k.At+int64(e.ttl.Seconds()) < time.Now().Unix(); expired || force {
+		if force || e.expired(k, now) {
 			core.ZeroKey(k.Key)
 			delete(cache, keyID)
 		}
@@ -358,6 +432,17 @@ func (e *engine) ClearCache(ctx context.Context, namespace string, force bool) e
 func (e *engine) DeleteUnusedKeys(ctx context.Context, namespace string) error {
 	if e.origin != nil {
 		return e.origin.DeleteUnusedKeys(ctx, namespace)
+	}
+
+	cache := e.cacheOf(namespace)
+	now := time.Now()
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for keyID, k := range cache {
+		if e.pastGrace(k, now) {
+			deleteEntry(cache, keyID)
+		}
 	}
 	return nil
 }
@@ -383,6 +468,15 @@ func (e *engine) PurgeNamespace(ctx context.Context, namespace string) error {
 	}
 	delete(e.cache, namespace)
 	return nil
+}
+
+// GracePeriod implements core.GracePeriodReporter: the store's own grace
+// period, or as a cache, its origin's.
+func (e *engine) GracePeriod() time.Duration {
+	if e.origin != nil {
+		return core.GracePeriodOf(e.origin)
+	}
+	return e.gracePeriod
 }
 
 // Origin implements core.KeyEngineCache

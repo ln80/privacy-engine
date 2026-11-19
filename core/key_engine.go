@@ -175,3 +175,34 @@ type KeyEngineCache interface {
 	// 'force' parameter allows to bypass the TTL check and immediately invalidates the cache.
 	ClearCache(ctx context.Context, namespace string, force bool) error
 }
+
+// GracePeriodReporter is implemented by key and token engines that erase what
+// was forgotten once a fixed grace period has passed, and enforce that
+// deadline on every read. GracePeriod returns 0 when the engine has none.
+//
+// Wrappers that implement it forward their origin's value; GracePeriodOf
+// finds it through any KeyEngineWrapper.
+type GracePeriodReporter interface {
+	GracePeriod() time.Duration
+}
+
+// GracePeriodOf returns the grace period reported by engine, or by the
+// nearest engine it wraps through KeyEngineWrapper.Origin. It returns 0 when
+// none reports one.
+func GracePeriodOf(engine any) time.Duration {
+	for engine != nil {
+		if r, ok := engine.(GracePeriodReporter); ok {
+			return r.GracePeriod()
+		}
+		w, ok := engine.(KeyEngineWrapper)
+		if !ok {
+			return 0
+		}
+		origin := w.Origin()
+		if origin == nil {
+			return 0
+		}
+		engine = origin
+	}
+	return 0
+}
