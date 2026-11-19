@@ -12,8 +12,8 @@
 Each layer knows only about the layer just below it:
 
 ```
-┌─ KEK ───────────── KMS CMK (privacy-engine.elastic, KMS wrapper)
-│    wraps the DEK, under an encryption context from a pluggable function
+┌─ KEK ───────────── held by the key engine's backend (for example a KMS key)
+│    wraps the DEK; the library never sees it
 ├─ DEK ───────────── one per (namespace, subject, key version), stored wrapped in the key store
 │    Forget disables it (graceful mode) or deletes it; PurgeNamespace removes all of a namespace's DEKs
 ├─ uses of the DEK
@@ -23,7 +23,7 @@ Each layer knows only about the layer just below it:
 └─ data ──────────── field values, streams
 ```
 
-- **A value says which DEK to use, never how the DEK is protected.** The KMS key and the encryption context live on the key item. A CMK migration, a new encryption-context function or a different KEK provider rewrites key items only, never data.
+- **A value says which DEK to use, never how the DEK is protected.** How a DEK is wrapped is the key engine's business. A KEK migration or a different KEK provider rewrites key records only, never data.
 - **Crypto-shredding covers every use.** Field values, stream keys and derived keys all depend on the DEK. The one exception is a derived key that a caller stores itself (PE-14). Storing it is the caller's responsibility.
 
 ## 2. Field value encoding
@@ -161,7 +161,7 @@ Revision 1 of this design took the subject from the struct instead. It would hav
 | **Field swap within one subject (PE-11).** Two values of the same subject and namespace (email ↔ phone of the same person) can be swapped undetected | Requires write access to the data store and only rearranges one person's own data. Binding Go field paths would make old data unreadable after a refactor, which is a real risk for event-sourced callers. If needed later, a stable `bind=<name>` tag option can arrive as a new `alg` with no format change |
 | **Subject visible in values** | See section 6. The rule must be followed by callers |
 | **Random-nonce bound** | About 2³² values per subject key (section 3) |
-| **Key rotation not built** | `keyVersion` is reserved and authenticated. Rotation needs the key store to keep several versions per subject, so it is designed after privacy-engine.elastic is fixed |
+| **Key rotation not built** | `keyVersion` is reserved and authenticated. Rotation needs the key store to keep several versions per subject; it is designed separately |
 | **Stream plaintext released per segment** | Inherent to streaming. Callers commit output only at `io.EOF` (section 5) |
 | **Plaintext as Go strings** | struct-sensitive passes field values as `string`, which cannot be wiped. Only the protector's `[]byte` copies are cleared |
 
@@ -173,8 +173,6 @@ Revision 1 of this design took the subject from the struct instead. It would hav
 
 | ID | Decision |
 |---|---|
-| D1 | The encryption context for wrapped DEKs is a pluggable function (privacy-engine.elastic) |
-| D2 | One CMK at this stage. The resolver keeps per-tenant CMKs possible later |
 | D3 | `Forget` is graceful by default; immediate deletion when forced |
 | D-C | A value that looks encrypted but does not authenticate under an active key fails `Encrypt` |
 | D-D | Prefix `ENC.`; only v2 is parsed |

@@ -109,7 +109,7 @@ p := privacy.NewProtector("tenant", engine, func(pc *privacy.ProtectorConfig) {
   └──────────┘    └────────────┘    └──────────────┘
 ```
 
-- **KeyEngine** manages encryption key lifecycle (create, get, disable, re-enable, delete). Implementations: in-memory (for tests), DynamoDB + KMS (production, see [privacy-engine.elastic](https://github.com/ln80/privacy-engine.elastic)).
+- **KeyEngine** manages encryption key lifecycle (create, get, disable, re-enable, delete). The `memory` package provides one for tests; production backends implement the interface (see [Backends](#backends)).
 - **Encryptor** handles the actual encryption. Default: AES-256-GCM with random nonces; the AAD binds the namespace, the key version and the algorithm ID (`core.Binding`).
 - **TokenEngine** stores the token vault for pseudonymization: opaque sealed records and blind-index entries, never values in clear. Optional.
 
@@ -145,8 +145,8 @@ security boundary. KMS is optional.
 | `PurgeNamespace` (`Protector.Purge`) | Every token and the vault key are deleted |
 
 IDs starting with `@` are reserved for the library and refused as subject IDs
-and tokens. The full design is in privacy-engine.elastic
-`docs/token-vault-v2.md`.
+and tokens. The full design, and the contract a `TokenEngine` must follow, is
+in [docs/token-vault.md](docs/token-vault.md).
 
 ## Streaming Encryption
 
@@ -199,9 +199,23 @@ defer clearFn()
 | `Encryptor` | AES-256-GCM | Encryption algorithm |
 | `TokenEngine` | `nil` | Token engine for pseudonymization |
 
-## Production Backend
+## Backends
 
-See [privacy-engine.elastic](https://github.com/ln80/privacy-engine.elastic) for a serverless implementation using AWS DynamoDB (key/token storage) and KMS (master key management), deployable via SAM.
+The `memory` package holds in-memory `KeyEngine` and `TokenEngine` implementations for tests. For production, implement the interfaces in `core` against your store and run the conformance suites in `privacytest` against it:
+
+```go
+func TestMyKeyEngine(t *testing.T) {
+    privacytest.RunKeyEngineTest(t, ctx, mystore.NewKeyEngine(...), func(c *privacytest.KeyEngineTestConfig) {
+        c.GracePeriod = 2 * time.Second
+    })
+}
+
+func TestMyTokenEngine(t *testing.T) {
+    privacytest.RunTokenEngineTest(t, ctx, mystore.NewTokenEngine(...))
+}
+```
+
+A production key engine should wrap data keys with a key encryption key held outside the store (a KMS or HSM): crypto-shredding and the token vault are only as strong as the key engine. Graceful `Forget` completes when the grace period ends: either the engine erases by itself (a storage TTL), or a scheduled job calls `KeyEngine.DeleteUnusedKeys` and `TokenEngine.EraseForgotten`.
 
 ## Wire Format
 

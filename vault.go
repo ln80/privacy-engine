@@ -10,8 +10,7 @@ import (
 	"github.com/ln80/privacy-engine/core"
 )
 
-// Token vault v2: the protector's side (privacy-engine.elastic
-// docs/token-vault-v2.md). The token engine only stores opaque records; the
+// Token vault: the protector's side (docs/token-vault.md). The token engine only stores opaque records; the
 // protector seals each value with a key derived from the namespace's "@vault"
 // DEK, finds existing tokens through a keyed blind index, and decides what a
 // record's state means.

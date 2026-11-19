@@ -15,8 +15,7 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
-// Token vault v2 cryptography (privacy-engine.elastic docs/token-vault-v2.md,
-// section 4). One DEK per namespace, kept by the key engine under the reserved
+// Token vault cryptography (docs/token-vault.md, section 3). One DEK per namespace, kept by the key engine under the reserved
 // ID "@vault", gives two derived keys:
 //
 //	indexKey = HKDF-SHA256(vaultDEK, info = "privacy-engine/vault/index/v1")
