@@ -3,7 +3,6 @@ package memory
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -262,7 +261,7 @@ func (e *engine) GetOrCreateKeys(ctx context.Context, namespace string, keyIDs [
 
 			newKey, err := keyGen(ctx, namespace, keyID)
 			if err != nil {
-				return nil, errors.Join(core.ErrPersistKeyFailure, err)
+				return nil, fmt.Errorf("%w: %w", core.ErrPersistKeyFailure, err)
 			}
 			k := core.Key(newKey)
 			putCachedKey(cache, keyID, cloneKey(k))

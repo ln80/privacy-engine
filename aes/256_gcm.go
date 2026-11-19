@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/ln80/privacy-engine/core"
@@ -57,7 +58,7 @@ func validateAES256Key(key core.Key) error {
 func (e *aes256gcm) Encrypt(binding core.Binding, key core.Key, plaintext []byte) (cipherTxt []byte, err error) {
 	defer func() {
 		if err != nil {
-			err = errors.Join(core.ErrEncryptionFailure, err)
+			err = fmt.Errorf("%w: %w", core.ErrEncryptionFailure, err)
 		}
 	}()
 
@@ -92,7 +93,7 @@ func (e *aes256gcm) Encrypt(binding core.Binding, key core.Key, plaintext []byte
 func (e *aes256gcm) Decrypt(binding core.Binding, key core.Key, cipherTxt []byte) (plaintext []byte, err error) {
 	defer func() {
 		if err != nil {
-			err = errors.Join(core.ErrDecryptionFailure, err)
+			err = fmt.Errorf("%w: %w", core.ErrDecryptionFailure, err)
 		}
 	}()
 
