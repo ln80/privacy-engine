@@ -324,7 +324,7 @@ func TestProtector_EncryptDecrypt(t *testing.T) {
 		// 	pc.GracefulMode = false
 		// })
 
-		p.(*protector).GracefulMode = false
+		p.cfg.GracefulMode = false
 
 		if err := p.Forget(ctx, pf.UserID); err != nil {
 			t.Fatal("expect err be nil, got", err)
@@ -410,7 +410,7 @@ func TestProtector_MonitorDoesNotWipeKeys(t *testing.T) {
 	origin := memory.NewKeyEngine()
 	eng := struct{ core.KeyEngine }{origin}
 
-	f := NewFactory(func(namespace string) Protector {
+	f := NewFactory(func(namespace string) *Protector {
 		return NewProtector(namespace, eng, func(pc *ProtectorConfig) {
 			pc.CacheEnabled = true
 			pc.CacheTTL = time.Millisecond

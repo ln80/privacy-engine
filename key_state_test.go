@@ -13,12 +13,12 @@ import (
 // Step 5 of wire format v2: Encrypt keeps an existing value only when it
 // authenticates, and Decrypt acts on the key state.
 
-func newStateProtector(ns string, eng core.KeyEngine, opts ...func(*ProtectorConfig)) Protector {
+func newStateProtector(ns string, eng core.KeyEngine, opts ...func(*ProtectorConfig)) *Protector {
 	opts = append([]func(*ProtectorConfig){func(pc *ProtectorConfig) { pc.CacheEnabled = false }}, opts...)
 	return NewProtector(ns, eng, opts...)
 }
 
-func encryptedProfile(t *testing.T, p Protector, subject string) *Profile {
+func encryptedProfile(t *testing.T, p *Protector, subject string) *Profile {
 	t.Helper()
 	pf := &Profile{UserID: subject, Fullname: "Alice Doe", Gender: "F", Address: Address{Street: "1 Main St"}}
 	if err := p.Encrypt(context.Background(), pf); err != nil {

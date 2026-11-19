@@ -107,6 +107,16 @@ p := privacy.NewProtector("tenant", engine, privacy.WithMultipleSubjects())
   └──────────┘    └────────────┘    └──────────────┘
 ```
 
+- **Protector** (`*privacy.Protector`, from `NewProtector`) is the main API. Code that needs only part of it can accept a role interface instead:
+
+  | Interface | Methods | Typical user |
+  |---|---|---|
+  | `Encrypter` | `Encrypt`, `Decrypt`, `EncryptStream`, `DecryptStream` | Repositories, event store decorators |
+  | `Shredder` | `Forget`, `Recover`, `DeleteToken`, `Purge` | Erasure and account-deletion flows |
+  | `Tokenizer` | `Tokenize` | Ingestion: create pseudonyms, never reveal them |
+  | `Reidentifier` | `Detokenize`, `ListTokens` | The few places that show values back |
+
+  Handing a service a `Tokenizer` rather than the `*Protector` makes least privilege visible in review and keeps test fakes small. It is not a security boundary: separate credentials are.
 - **KeyEngine** manages encryption key lifecycle (create, get, disable, re-enable, delete). The `memory` package provides one for tests; production backends implement the interface (see [Backends](#backends)).
 - **Encryptor** handles the actual encryption. Default: AES-256-GCM with random nonces; the AAD binds the namespace, the key version and the algorithm ID (`core.Binding`).
 - **TokenEngine** stores the token vault for pseudonymization: opaque sealed records and blind-index entries, never values in clear. Optional.
@@ -174,7 +184,7 @@ nothing.
 For multi-tenant applications, use the Factory to manage one Protector per namespace:
 
 ```go
-factory := privacy.NewFactory(func(namespace string) privacy.Protector {
+factory := privacy.NewFactory(func(namespace string) *privacy.Protector {
     return privacy.NewProtector(namespace, keyEngine, opts...)
 })
 

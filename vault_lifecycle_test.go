@@ -21,7 +21,7 @@ type lifecycle struct {
 	ctx    context.Context
 	keys   core.KeyEngine
 	tokens *memory.TokenEngine
-	p      Protector
+	p      *Protector
 }
 
 func newLifecycle(t *testing.T, graceful bool) *lifecycle {

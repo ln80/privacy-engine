@@ -37,27 +37,27 @@ func TestTokenMethodErrors(t *testing.T) {
 
 	calls := map[string]struct {
 		category Error
-		call     func(Protector) error
+		call     func(*Protector) error
 	}{
-		"Tokenize": {ErrTokenizeFailure, func(p Protector) error {
+		"Tokenize": {ErrTokenizeFailure, func(p *Protector) error {
 			_, err := p.Tokenize(ctx, TokenDataSlice("a@example.com"))
 			return err
 		}},
-		"Detokenize": {ErrDetokenizeFailure, func(p Protector) error {
+		"Detokenize": {ErrDetokenizeFailure, func(p *Protector) error {
 			_, err := p.Detokenize(ctx, []string{"tok"})
 			return err
 		}},
-		"DeleteToken": {ErrDeleteTokenFailure, func(p Protector) error {
+		"DeleteToken": {ErrDeleteTokenFailure, func(p *Protector) error {
 			return p.DeleteToken(ctx, "tok")
 		}},
-		"ListTokens": {ErrListTokensFailure, func(p Protector) error {
+		"ListTokens": {ErrListTokensFailure, func(p *Protector) error {
 			_, err := p.ListTokens(ctx, core.ListTokensQuery{})
 			return err
 		}},
 	}
 	for name, c := range calls {
 		t.Run(name, func(t *testing.T) {
-			for cause, p := range map[error]Protector{errStoreDown: broken, core.ErrTokenEngineNotConfigured: none} {
+			for cause, p := range map[error]*Protector{errStoreDown: broken, core.ErrTokenEngineNotConfigured: none} {
 				err := c.call(p)
 				var perr Error
 				if !errors.Is(err, c.category) || !errors.Is(err, cause) || !errors.As(err, &perr) {

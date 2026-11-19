@@ -31,7 +31,7 @@ func (r *recordingAuditor) last(t *testing.T) AuditEvent {
 
 const auditGrace = time.Hour
 
-func newAuditProtector(t *testing.T, graceful bool) (Protector, *recordingAuditor) {
+func newAuditProtector(t *testing.T, graceful bool) (*Protector, *recordingAuditor) {
 	t.Helper()
 	a := &recordingAuditor{}
 	eng := memory.NewKeyEngine(func(c *core.KeyEngineConfig) { c.GracePeriod = auditGrace })

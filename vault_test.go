@@ -12,7 +12,7 @@ import (
 	"github.com/ln80/privacy-engine/memory"
 )
 
-func newVaultProtector(ns string, keys core.KeyEngine, tokens core.TokenEngine) Protector {
+func newVaultProtector(ns string, keys core.KeyEngine, tokens core.TokenEngine) *Protector {
 	return NewProtector(ns, keys, func(pc *ProtectorConfig) {
 		pc.TokenEngine = tokens
 		pc.CacheEnabled = false

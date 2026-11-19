@@ -25,7 +25,7 @@ type User struct {
 func Example() {
 	ctx := context.Background()
 
-	newProtector := func(namespace string) privacy.Protector {
+	newProtector := func(namespace string) *privacy.Protector {
 		return privacy.NewProtector(namespace, memory.NewKeyEngine(),
 			// The token engine is optional. Without it, the token methods
 			// fail with core.ErrTokenEngineNotConfigured.
