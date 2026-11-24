@@ -1,6 +1,7 @@
 // Package privacytest holds the conformance suites that every backend must
 // pass, and test doubles.
 //
+//	TestEncryptor    core.Encryptor    requirements R-EN
 //	TestKeyEngine    core.KeyEngine    requirements R-KE
 //	TestKeyWrapper   core.KeyWrapper   requirements R-KW
 //	TestTokenEngine  core.TokenEngine  requirements R-TE
