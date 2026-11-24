@@ -9,7 +9,7 @@ import (
 
 func TestTokenEngine(t *testing.T) {
 	eng := NewTokenEngine()
-	privacytest.RunTokenEngineTest(t, context.Background(), eng, func(c *privacytest.TokenEngineTestConfig) {
+	privacytest.TestTokenEngine(t, eng, func(c *privacytest.TokenEngineTestConfig) {
 		c.SealedProbe = func(_ context.Context, ns, token string) (bool, error) {
 			eng.mu.Lock()
 			defer eng.mu.Unlock()

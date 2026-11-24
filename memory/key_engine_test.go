@@ -13,13 +13,11 @@ import (
 )
 
 func TestKeyEngine(t *testing.T) {
-	ctx := context.Background()
-
 	t.Run("in-memory engine", func(t *testing.T) {
 		grace := 200 * time.Millisecond
 		eng := NewKeyEngine(func(c *core.KeyEngineConfig) { c.GracePeriod = grace })
 
-		privacytest.RunKeyEngineTest(t, ctx, eng, func(c *privacytest.KeyEngineTestConfig) {
+		privacytest.TestKeyEngine(t, eng, func(c *privacytest.KeyEngineTestConfig) {
 			c.GracePeriod = grace
 			c.KeyMaterialProbe = func(_ context.Context, ns, keyID string) (bool, error) {
 				e := eng.(*engine)
@@ -35,7 +33,7 @@ func TestKeyEngine(t *testing.T) {
 
 		eng := NewCacheWrapper(originEng, 20*time.Minute)
 
-		privacytest.RunKeyEngineTest(t, ctx, eng)
+		privacytest.TestKeyEngine(t, eng)
 	})
 }
 
