@@ -15,7 +15,7 @@ fuzz:
 	@set -e; for pkg in . ./aes; do \
 		for target in $$(go test -list '^Fuzz' $$pkg | grep '^Fuzz'); do \
 			echo "== $$pkg $$target"; \
-			go test -run='^$$' -fuzz="^$$target$$" -fuzztime=$(FUZZTIME) $$pkg; \
+			./scripts/fuzz.sh $$pkg $$target $(FUZZTIME); \
 		done; \
 	done
 
