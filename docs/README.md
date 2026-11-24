@@ -11,7 +11,7 @@ coding agent can read the version actually in use.
 | [key-lifecycle.md](key-lifecycle.md) | Follow keys and tokens through their states, the erasure timeline, and the rotation limitation |
 | [implementing-backends.md](implementing-backends.md) | Build a key store, key wrapper or token store (R-KE, R-KW, R-TE, R-EN) |
 | [production.md](production.md) | Deploy, configure, back up and monitor |
-| [wire-format-v2.md](wire-format-v2.md) | Parse or produce encrypted values and streams; versioning guarantees |
+| [wire-format.md](wire-format.md) | Parse or produce encrypted values and streams; versioning guarantees |
 | [token-vault.md](token-vault.md) | Understand tokenization's cryptography and flows |
 | [audit-events.md](audit-events.md) | Record erasure and re-identification |
 

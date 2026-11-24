@@ -281,7 +281,7 @@ ENC.<base64url(subjectID)>.<base64url(alg | keyVersion | nonce | ciphertext | ta
 The value names the subject whose key encrypted it, so it can be decrypted
 into any struct and keeps following that subject when copied. The algorithm
 ID and key version are authenticated with the namespace. Only this format is
-parsed. The full specification is in [docs/wire-format-v2.md](docs/wire-format-v2.md).
+parsed. The full specification is in [docs/wire-format.md](docs/wire-format.md).
 
 | On `Encrypt`, a field that… | Result |
 |---|---|
@@ -311,7 +311,7 @@ Every struct is all-or-nothing: on error, none of its fields change.
   key store backups until their retention ends, are yours to handle
   ([docs/production.md](docs/production.md)).
 - **Pre-v1 API**: minor releases may break it. Stored data follows the
-  [versioning rules](docs/wire-format-v2.md#9-versioning-and-compatibility).
+  [versioning rules](docs/wire-format.md#8-versioning-and-compatibility).
 
 ## License
 

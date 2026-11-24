@@ -24,7 +24,7 @@ Encrypted field values look like:
 	ENC.<base64url(subjectID)>.<base64url(alg | keyVersion | nonce | ciphertext | tag)>
 
 The full specification of field values and streams, and the behaviour of
-Encrypt and Decrypt for each key state, is in docs/wire-format-v2.md.
+Encrypt and Decrypt for each key state, is in docs/wire-format.md.
 
 # Documentation
 

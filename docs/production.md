@@ -71,7 +71,7 @@ recovered.
 
 Pin the module version. Before v1.0, minor releases may break the API; the
 release notes say so. Stored data stays readable across releases under the
-rules in [wire-format-v2.md](wire-format-v2.md#9-versioning-and-compatibility).
+rules in [wire-format.md](wire-format.md#8-versioning-and-compatibility).
 
 ## Checklist
 

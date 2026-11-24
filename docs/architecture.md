@@ -75,7 +75,7 @@ requirements (`R-KE`, `R-KW`, `R-TE`, `R-EN` in
 | R-AU-1 | Every call that erases, recovers or reveals emits one `AuditEvent`, success or failure. Events never carry values or keys |
 | R-AU-2 | If the auditor fails, calls that reveal return nothing; calls that erase are applied and return `ErrAuditFailure`, so they can be retried |
 
-Details: [wire-format-v2.md](wire-format-v2.md) (R-CS-1, 5 to 8),
+Details: [wire-format.md](wire-format.md) (R-CS-1, 5 to 8),
 [token-vault.md](token-vault.md) (R-TK), [audit-events.md](audit-events.md)
 (R-AU).
 

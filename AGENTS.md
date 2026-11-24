@@ -25,7 +25,7 @@ Rules:
   never renumbered or reused.
 - **Formats are permanent.** Never change the meaning of a stored identifier
   (`alg`, stream version, vault byte, HKDF label). See
-  [wire-format-v2.md §9](docs/wire-format-v2.md#9-versioning-and-compatibility).
+  [wire-format.md §8](docs/wire-format.md#8-versioning-and-compatibility).
 - **No secrets in output.** Keys, plaintext, token values, sealed values and
   blind indexes never go into errors, logs or test failure messages.
 - **Fail closed.** On doubt (unknown version, failed authentication, failed
