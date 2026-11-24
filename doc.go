@@ -25,5 +25,12 @@ Encrypted field values look like:
 
 The full specification of field values and streams, and the behaviour of
 Encrypt and Decrypt for each key state, is in docs/wire-format-v2.md.
+
+# Documentation
+
+The docs directory ships with the module; docs/README.md is its index. It
+holds the requirements, the threat model, the key lifecycle, what a
+production backend must do (docs/implementing-backends.md) and production
+guidelines.
 */
 package privacy
