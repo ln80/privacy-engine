@@ -57,26 +57,35 @@ func TestKeyStore(t *testing.T) {
     store := mystore.NewKeyEngine(db, mystore.WithGracePeriod(2*time.Second))
     privacytest.TestKeyEngine(t, store, func(c *privacytest.KeyEngineTestConfig) {
         c.GracePeriod = 2 * time.Second                 // enables R-KE-6, R-KE-11
-        c.KeyMaterialProbe = mystore.ProbeMaterial(db) // reads storage directly, for R-KE-7
+        c.KeyMaterialProbe = mystore.ProbeKeyMaterial(db) // reads storage directly, for R-KE-7
     })
 }
 
 func TestKeyWrapper(t *testing.T) {
     w := mykms.NewKeyWrapper(kmsClient, keyID)
     privacytest.TestKeyWrapper(t, w)
-    privacytest.TestKeyEngine(t, envelope.NewKeyEngine(w, mystore.NewKeyEngine(db)))
+    // The composition needs the same options: the store under it holds wrapped bytes.
+    store := mystore.NewKeyEngine(db, mystore.WithGracePeriod(2*time.Second))
+    privacytest.TestKeyEngine(t, envelope.NewKeyEngine(w, store), func(c *privacytest.KeyEngineTestConfig) {
+        c.GracePeriod = 2 * time.Second
+        c.KeyMaterialProbe = mystore.ProbeKeyMaterial(db)
+    })
 }
 
 func TestTokenStore(t *testing.T) {
-    privacytest.TestTokenEngine(t, mystore.NewTokenEngine(db), func(c *privacytest.TokenEngineTestConfig) {
+    grace := 7 * 24 * time.Hour // must exceed three hours
+    store := mystore.NewTokenEngine(db, mystore.WithTokenGracePeriod(grace))
+    privacytest.TestTokenEngine(t, store, func(c *privacytest.TokenEngineTestConfig) {
+        c.GracePeriod = grace                      // R-TE-5
         c.SealedProbe = mystore.ProbeSealed(db) // reads storage directly
     })
 }
 ```
 
 A **skipped** subtest means an option is unset: its message names the
-option. Set `GracePeriod` and the probes; a backend is not done while
-anything is skipped for lack of configuration. Set `ErasesWithoutJanitor`
+option. Set `GracePeriod` and the probes on every suite, compositions
+included; a backend is not done while anything is skipped. Both stores take
+a grace period, enforce it on read and report it. Set `ErasesWithoutJanitor`
 only if storage expires keys by itself (a TTL).
 
 ## 4. Implement, one component at a time

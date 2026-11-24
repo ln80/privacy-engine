@@ -23,7 +23,7 @@ CREATE TABLE privacy_keys (
   key_id      TEXT NOT NULL,
   state       TEXT NOT NULL CHECK (state IN ('ACTIVE','DISABLED','DELETED')),
   key         BLOB,
-  disabled_at INTEGER,          -- Unix seconds, NULL unless DISABLED
+  disabled_at INTEGER,          -- Unix milliseconds, NULL unless DISABLED
   PRIMARY KEY (namespace, key_id)
 );
 ```
@@ -43,7 +43,12 @@ func effective(r record, now time.Time, grace time.Duration) core.KeyState {
 
 Use it in `GetKeys`, `GetOrCreateKeys`, `DisableKey` and `ReEnableKey`. A key
 whose deadline passed must read `DELETED` and refuse `ReEnableKey`, even if
-its material is still stored.
+its material is still stored. Store times with at least millisecond
+precision: whole seconds shorten a 2-second test grace period by up to half.
+
+An `ACTIVE` record without key bytes cannot happen in a correct store. Treat
+it as corruption and return an error wrapping `core.ErrGetKeyFailure`; do not
+guess a state.
 
 ## GetKeys (R-KE-1, R-KE-2)
 
@@ -101,7 +106,7 @@ SELECT state, key, disabled_at FROM privacy_keys WHERE namespace = ? AND key_id 
 `KeyMaterialProbe` for the suite reads storage directly:
 
 ```go
-func ProbeMaterial(db *sql.DB) func(ctx context.Context, ns, id string) (bool, error) {
+func ProbeKeyMaterial(db *sql.DB) func(ctx context.Context, ns, id string) (bool, error) {
     return func(ctx context.Context, ns, id string) (bool, error) {
         var n int
         err := db.QueryRowContext(ctx,
@@ -117,6 +122,15 @@ func ProbeMaterial(db *sql.DB) func(ctx context.Context, ns, id string) (bool, e
   unrelated keys.
 - Implement `core.GracePeriodReporter`: `func (e *Engine) GracePeriod() time.Duration`.
   Audit events use it to state when erasure is final.
+
+## SQLite
+
+SQLite allows one writer at a time; without settings, concurrent conditional
+writes fail with `SQLITE_BUSY` instead of waiting, and R-KE-3 or R-TE-2
+fails under `-race`. With the pure-Go driver `modernc.org/sqlite`, open with
+`?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate`,
+so writers wait and transactions take the write lock up front. Postgres and
+MySQL need no such setting.
 
 ## Errors and secrets
 

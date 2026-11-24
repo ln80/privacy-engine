@@ -70,12 +70,15 @@ an unconditional delete would lose the newer mapping.
 
 ## Grace period on read (R-TE-5)
 
-If the store erases forgotten records by itself (a TTL), a record forgotten
-for the grace period or longer must read `ERASED` with no sealed value and
-refuse `Restore`, even before the TTL fires. Without a TTL, `EraseForgotten`
-does the erasure and nothing more is needed. Declare `GracePeriod` in the
-suite only for a store that erases by itself; it must exceed three hours,
-because the suite forgets records up to two hours in the past.
+The store takes a grace period (an option such as `WithGracePeriod(d)`).
+A record forgotten for `d` or longer must read `ERASED` with no sealed
+value in `GetRecords` and `ListTokens`, and `Restore` must refuse it with
+`core.ErrTokenErased`, whether or not `EraseForgotten` or a storage TTL has
+removed the value yet. Implement `core.GracePeriodReporter`
+(`GracePeriod() time.Duration`): without it, the Protector cannot state
+`FinalAt` when a token is forgotten. Set the same value as `GracePeriod` in
+the suite; it must exceed three hours, because other subtests forget
+records up to two hours in the past.
 
 ## Listing and purging (R-TE-6, R-TE-7, R-TE-8)
 
@@ -85,6 +88,20 @@ because the suite forgets records up to two hours in the past.
   otherwise. Cursors hold tokens, never values or indexes.
 - `PurgeNamespace`: delete every record and index entry; idempotent.
 - Every query filters on `namespace`.
+
+## Errors
+
+Return the contract errors so callers can match them: `core.ErrTokenExists`,
+`*core.IndexTakenError`, `core.ErrTokenNotFound`, `core.ErrTokenErased`.
+Wrap storage failures with the core sentinel of the operation:
+`core.ErrTokenizeFailure` (`LookupIndex`, `Insert`),
+`core.ErrDetokenizeFailure` (`GetRecords`, `ListTokens`),
+`core.ErrDeleteTokenFailure` (`Forget`, `Restore`, `Erase`,
+`EraseForgotten`, `DeleteToken`), `core.ErrPurgeTokenFailure`
+(`PurgeNamespace`). Never include sealed values or indexes in errors.
+
+SQLite needs `busy_timeout`, WAL and immediate transactions for concurrent
+inserts: see the SQLite section of [key-store.md](key-store.md#sqlite).
 
 ## SealedProbe for the suite
 
