@@ -88,8 +88,9 @@ interface: `Encrypter`, `Shredder`, `Tokenizer` or `Reidentifier`.
 ## Production
 
 The `memory` engines are for tests. In production you implement the storage
-contracts in `core` (a key store, a KMS-backed key wrapper, a token store)
-and prove them with the `privacytest` conformance suites. Start with:
+contracts in `core` (a key store, a `KeyWrapper` for your KMS or HSM, a token
+store), combine keys with `envelope.NewKeyEngine(wrapper, store)`, and prove
+them with the `privacytest` conformance suites. Start with:
 
 - [docs/implementing-backends.md](docs/implementing-backends.md): what a backend must do
 - [docs/production.md](docs/production.md): deployment, erasure, backups, monitoring

@@ -2,17 +2,17 @@
 
 | | |
 |---|---|
-| Status | **Normative.** R-KE and R-TE are checked by `privacytest`; R-KW is specified, not built yet (§3) |
+| Status | **Normative.** Checked by the `privacytest` suites (§6) |
 
 | You build | Contract | When |
 |---|---|---|
 | Key store | `core.KeyEngine` | Always |
-| Key wrapper | `core.KeyWrapper` (planned) | Always in production |
+| Key wrapper | `core.KeyWrapper` | Always in production |
 | Token store | `core.TokenEngine` | If you tokenize |
 | Audit sink | `privacy.Auditor` | Regulated data ([audit-events.md](audit-events.md)) |
 | Encryptor | `core.Encryptor` | Rarely (§5) |
 
-Compose keys as `key wrapper → key store`; the `Protector` adds its cache.
+Combine them with `envelope.NewKeyEngine(wrapper, store)`; the `Protector` adds its cache.
 
 ## 1. Every backend
 
@@ -42,12 +42,11 @@ disable time.
 To expire material with a storage TTL, keep it in its own record so the
 `DELETED` marker survives, and still enforce R-KE-6 on read: TTLs fire late.
 
-## 3. Key wrapper: `core.KeyWrapper` (planned)
+## 3. Key wrapper: `core.KeyWrapper`
 
-A KEK in a KMS or HSM wraps every DEK; the store holds wrapped DEKs only. The
-library will ship this interface, a generic engine combining a wrapper and a
-store, and a suite. Until then, write a `core.KeyEngineWrapper` with the same
-behaviour.
+A KEK in a KMS or HSM wraps every DEK; the store holds wrapped DEKs only. You
+implement two methods; `envelope.NewKeyEngine(wrapper, store)` does the rest,
+including R-KW-6. `memory.NewKeyWrapper` is a reference for tests.
 
 ```go
 type KeyWrapper interface {
@@ -65,7 +64,7 @@ type KeyWrapper interface {
 | R-KW-3 | DEKs are 32 bytes from the KMS, HSM or `crypto/rand` |
 | R-KW-4 | A tampered, truncated or foreign blob fails to unwrap |
 | R-KW-5 | The binding of stored keys never changes; version it |
-| R-KW-6 | When two processes create one key at once, only the stored blob's DEK is used: the loser unwraps the winner's blob |
+| R-KW-6 | When two processes create one key at once, only the stored blob's DEK is used: the loser unwraps the winner's blob. `envelope.KeyEngine` does this |
 
 Deployment:
 
@@ -112,6 +111,11 @@ func TestKeyStore(t *testing.T) {
         c.GracePeriod = 2 * time.Second
         c.KeyMaterialProbe = mystore.ProbeKeyMaterial(client) // reads storage directly, for R-KE-7
     })
+}
+
+func TestKeyWrapper(t *testing.T) {
+    privacytest.TestKeyWrapper(t, mykms.NewKeyWrapper(client))
+    privacytest.TestKeyEngine(t, envelope.NewKeyEngine(mykms.NewKeyWrapper(client), mystore.NewKeyEngine(client)))
 }
 
 func TestTokenStore(t *testing.T) {
