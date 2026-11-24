@@ -69,9 +69,9 @@ func TestKeyWrapper(t *testing.T, w core.KeyWrapper, opts ...func(*KeyWrapperTes
 		}
 	})
 
-	run("R-KW-4 a tampered, truncated or foreign blob fails", func(c *wrapCheck) {
+	run("R-KW-4 a tampered, truncated or foreign blob never unwraps to another key", func(c *wrapCheck) {
 		a := randomID()
-		_, wrapped := c.generate(c.ns, a)
+		plain, wrapped := c.generate(c.ns, a)
 		_, foreign := c.generate(c.ns, randomID())
 		n := len(wrapped)
 		flip := func(i int) []byte {
@@ -79,16 +79,23 @@ func TestKeyWrapper(t *testing.T, w core.KeyWrapper, opts ...func(*KeyWrapperTes
 			b[i] ^= 0x01
 			return b
 		}
+		// A change may land in non-secret metadata a KMS cross-checks
+		// otherwise (a key reference): the original key is then acceptable.
+		// Any other result is not.
 		for name, blob := range map[string][]byte{
 			"first byte flipped":  flip(0),
 			"middle byte flipped": flip(n / 2),
 			"last byte flipped":   flip(n - 1),
 			"last byte cut":       wrapped[:n-1],
 			"half cut":            wrapped[:n/2],
-			"empty":               {},
-			"random":              randomBytes(n),
 			"extra byte":          append(bytes.Clone(wrapped), 0),
-			"another key's blob":  foreign,
+		} {
+			c.neverAnother(c.ns, a, blob, plain, name)
+		}
+		for name, blob := range map[string][]byte{
+			"empty":              {},
+			"random":             randomBytes(n),
+			"another key's blob": foreign,
 		} {
 			c.refused(c.ns, a, blob, name)
 		}
@@ -119,6 +126,18 @@ func (c *wrapCheck) refused(ns, keyID string, blob []byte, what string) {
 		c.t.Fatalf("UnwrapKey with %s: expect an error, got a key", what)
 	}
 	if len(got) != 0 {
+		c.t.Fatalf("UnwrapKey with %s: returned bytes with its error", what)
+	}
+}
+
+// neverAnother checks that blob fails to unwrap, or unwraps to want.
+func (c *wrapCheck) neverAnother(ns, keyID string, blob []byte, want core.Key, what string) {
+	c.t.Helper()
+	got, err := c.w.UnwrapKey(c.ctx, ns, keyID, blob)
+	if err == nil && !bytes.Equal(got, want) {
+		c.t.Fatalf("UnwrapKey with %s: returned another key", what)
+	}
+	if err != nil && len(got) != 0 {
 		c.t.Fatalf("UnwrapKey with %s: returned bytes with its error", what)
 	}
 }

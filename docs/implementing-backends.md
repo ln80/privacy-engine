@@ -62,7 +62,7 @@ type KeyWrapper interface {
 | R-KW-1 | A wrapped DEK unwraps only under its namespace and key ID (KMS encryption context, or AEAD AAD) |
 | R-KW-2 | The KEK never leaves the KMS or HSM; plaintext DEKs never reach storage or logs |
 | R-KW-3 | DEKs are 32 bytes from the KMS, HSM or `crypto/rand` |
-| R-KW-4 | A tampered, truncated or foreign blob fails to unwrap |
+| R-KW-4 | A tampered or truncated blob never unwraps to another key: it fails, or yields the original key if only non-secret metadata changed. Another key's blob fails |
 | R-KW-5 | The binding of stored keys never changes; version it |
 | R-KW-6 | When two processes create one key at once, only the stored blob's DEK is used: the loser unwraps the winner's blob. `envelope.KeyEngine` does this |
 
