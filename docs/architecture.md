@@ -89,7 +89,8 @@ to unwrap it. Give the three to different principals
 | Package | Holds |
 |---|---|
 | `privacy` | `Protector`, options, role interfaces, audit, token vault |
-| `core` | Contracts (`KeyEngine`, `TokenEngine`, `Encryptor`) and types |
+| `core` | Contracts (`KeyEngine`, `KeyWrapper`, `TokenEngine`, `Encryptor`) and types |
 | `aes` | Default `Encryptor`: AES-256-GCM fields, STREAM streams |
-| `memory` | In-memory engines and key cache, for tests |
+| `envelope` | Key engine combining a `core.KeyWrapper` (KMS, HSM) with a key store |
+| `memory` | In-memory engines, key wrapper and key cache, for tests |
 | `privacytest` | Conformance suites and test doubles |

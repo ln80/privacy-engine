@@ -2,26 +2,23 @@
 
 | | |
 |---|---|
-| Status | **Normative.** R-KE and R-TE are checked by `privacytest`; R-KW is specified, not built yet (§3) |
+| Status | **Normative.** Checked by the `privacytest` suites (§6) |
 
 | You build | Contract | When |
 |---|---|---|
 | Key store | `core.KeyEngine` | Always |
-| Key wrapper | `core.KeyWrapper` (planned) | Always in production |
+| Key wrapper | `core.KeyWrapper` | Always in production |
 | Token store | `core.TokenEngine` | If you tokenize |
 | Audit sink | `privacy.Auditor` | Regulated data ([audit-events.md](audit-events.md)) |
 | Encryptor | `core.Encryptor` | Rarely (§5) |
 
-Compose keys as `key wrapper → key store`; the `Protector` adds its cache.
+Combine them with `envelope.NewKeyEngine(wrapper, store)`; the `Protector` adds its cache.
 
 ## 1. Every backend
 
 1. Passes its conformance suite in CI, against real storage or an emulator.
 2. Never logs or returns in errors key material, sealed values or indexes.
-3. Returns copies: callers zero what they receive.
-4. Is safe for concurrent use, across goroutines and processes.
-5. Isolates namespaces completely.
-6. Reports its grace period through `core.GracePeriodReporter`.
+3. Is safe for concurrent use, across goroutines and processes.
 
 ## 2. Key store: `core.KeyEngine`
 
@@ -30,7 +27,7 @@ disable time.
 
 | ID | Requirement |
 |---|---|
-| R-KE-1 | `GetKeys` puts each requested ID in exactly one of `keys` or `missing` (`DISABLED`, `DELETED`, `UNKNOWN`) |
+| R-KE-1 | `GetKeys` puts each requested ID in exactly one of `keys` or `missing` (`DISABLED`, `DELETED`, `UNKNOWN`). Returned keys are copies the caller may zero |
 | R-KE-2 | An ID without a record is `UNKNOWN`, never stored |
 | R-KE-3 | `GetOrCreateKeys` creates only if no record exists, atomically: concurrent callers in any process get the same key. Use a conditional write; on conflict, read the winner |
 | R-KE-4 | `GetOrCreateKeys` never creates a key for a `DISABLED` or `DELETED` ID; it omits it |
@@ -39,16 +36,17 @@ disable time.
 | R-KE-7 | `DeleteKey`, `DeleteUnusedKeys` (or a TTL) and `PurgeNamespace` remove material, not just flag it. `DeleteKey` keeps a `DELETED` record |
 | R-KE-8 | `PurgeNamespace` removes every record, idempotently; purged IDs read `UNKNOWN` |
 | R-KE-9 | `DeleteKey` on an unknown ID writes nothing |
+| R-KE-10 | Namespaces are isolated: one key ID in two namespaces is two independent keys |
+| R-KE-11 | An engine with a grace period reports it through `core.GracePeriodReporter`, so audit events can state `FinalAt` |
 
 To expire material with a storage TTL, keep it in its own record so the
 `DELETED` marker survives, and still enforce R-KE-6 on read: TTLs fire late.
 
-## 3. Key wrapper: `core.KeyWrapper` (planned)
+## 3. Key wrapper: `core.KeyWrapper`
 
-A KEK in a KMS or HSM wraps every DEK; the store holds wrapped DEKs only. The
-library will ship this interface, a generic engine combining a wrapper and a
-store, and a suite. Until then, write a `core.KeyEngineWrapper` with the same
-behaviour.
+A KEK in a KMS or HSM wraps every DEK; the store holds wrapped DEKs only. You
+implement two methods; `envelope.NewKeyEngine(wrapper, store)` does the rest,
+including R-KW-6. `memory.NewKeyWrapper` is a reference for tests.
 
 ```go
 type KeyWrapper interface {
@@ -64,9 +62,9 @@ type KeyWrapper interface {
 | R-KW-1 | A wrapped DEK unwraps only under its namespace and key ID (KMS encryption context, or AEAD AAD) |
 | R-KW-2 | The KEK never leaves the KMS or HSM; plaintext DEKs never reach storage or logs |
 | R-KW-3 | DEKs are 32 bytes from the KMS, HSM or `crypto/rand` |
-| R-KW-4 | A tampered, truncated or foreign blob fails to unwrap |
+| R-KW-4 | A tampered or truncated blob never unwraps to another key: it fails, or yields the original key if only non-secret metadata changed. Another key's blob fails |
 | R-KW-5 | The binding of stored keys never changes; version it |
-| R-KW-6 | When two processes create one key at once, only the stored blob's DEK is used: the loser unwraps the winner's blob |
+| R-KW-6 | When two processes create one key at once, only the stored blob's DEK is used: the loser unwraps the winner's blob. `envelope.KeyEngine` does this |
 
 Deployment:
 
@@ -84,13 +82,14 @@ value. Design: [token-vault.md](token-vault.md).
 
 | ID | Requirement |
 |---|---|
-| R-TE-1 | `Index` and `Sealed` are opaque; look up by `Index` only, derive nothing from `Sealed` |
+| R-TE-1 | `Index` and `Sealed` are stored as given; look up by `Index` only, derive nothing from `Sealed`. Returned records are copies |
 | R-TE-2 | `Insert` writes record and index entry together or not at all, if the token is new (`ErrTokenExists`) and the index free (`*IndexTakenError`) |
 | R-TE-3 | `Forget`, `Erase` and `DeleteToken` remove the index entry only if it still points to the token |
 | R-TE-4 | `Forget` keeps the first time; `Restore` re-indexes only a free index and fails with `ErrTokenErased` on an erased record; `Erase` removes the sealed value |
 | R-TE-5 | A record forgotten for the grace period or longer reads `ERASED`, without sealed value, whether or not `EraseForgotten` ran |
 | R-TE-6 | `ListTokens` is ordered, prefix-filtered and paged; cursors hold tokens only |
 | R-TE-7 | `PurgeNamespace` removes every record and index entry, idempotently |
+| R-TE-8 | Namespaces are isolated |
 
 ## 5. Encryptor: `core.Encryptor`
 
@@ -108,17 +107,24 @@ Keep the default unless you must use another construction (FIPS, say).
 
 ```go
 func TestKeyStore(t *testing.T) {
-    privacytest.RunKeyEngineTest(t, t.Context(), mystore.NewKeyEngine(client),
-        func(c *privacytest.KeyEngineTestConfig) {
-            c.GracePeriod = 2 * time.Second
-            c.KeyMaterialProbe = mystore.ProbeKeyMaterial(client) // reads storage directly, for R-KE-7
-        })
+    privacytest.TestKeyEngine(t, mystore.NewKeyEngine(client), func(c *privacytest.KeyEngineTestConfig) {
+        c.GracePeriod = 2 * time.Second
+        c.KeyMaterialProbe = mystore.ProbeKeyMaterial(client) // reads storage directly, for R-KE-7
+    })
+}
+
+func TestKeyWrapper(t *testing.T) {
+    privacytest.TestKeyWrapper(t, mykms.NewKeyWrapper(client))
+    privacytest.TestKeyEngine(t, envelope.NewKeyEngine(mykms.NewKeyWrapper(client), mystore.NewKeyEngine(client)))
 }
 
 func TestTokenStore(t *testing.T) {
-    privacytest.RunTokenEngineTest(t, t.Context(), mystore.NewTokenEngine(client))
+    privacytest.TestTokenEngine(t, mystore.NewTokenEngine(client))
 }
 ```
 
-Set `ErasesWithoutJanitor` if a TTL erases. Run the suite for every
-composition you deploy.
+Each requirement is a subtest named after its ID: `go test -run
+'TestKeyStore/R-KE-3'` runs one. A subtest whose option is not set is
+skipped with the option to set. Set `ErasesWithoutJanitor` if a TTL erases,
+or `Janitor` to trigger your own job. Run the suite for every composition you
+deploy.
