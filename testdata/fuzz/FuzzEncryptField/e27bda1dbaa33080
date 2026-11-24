@@ -1,0 +1,2 @@
+go test fuzz v1
+string("ENC.c000000.000x00E0000000")
