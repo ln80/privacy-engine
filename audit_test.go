@@ -224,3 +224,43 @@ func TestGracePeriodOfThroughCache(t *testing.T) {
 		t.Fatalf("expect 0 for an engine that reports none, got %v", got)
 	}
 }
+
+// Immediate and graceful Forget agree on IDs without a key: an unknown or
+// already deleted subject is ErrKeyNotFound, and the event says nothing was
+// forgotten.
+func TestAudit_ImmediateForgetOfNothing(t *testing.T) {
+	ctx := context.Background()
+	p, a := newAuditProtector(t, true)
+	if err := p.Encrypt(ctx, &auditRecord{ID: "u1", Email: "a@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Forget(ctx, "u1", Immediately()); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"never-seen", "u1"} { // unknown, then already deleted
+		err := p.Forget(ctx, id, Immediately())
+		if !errors.Is(err, core.ErrKeyNotFound) {
+			t.Fatalf("%s: expect ErrKeyNotFound, got %v", id, err)
+		}
+		if e := a.last(t); e.HadKey || e.HadToken || !e.FinalAt.IsZero() || !errors.Is(e.Err, core.ErrKeyNotFound) {
+			t.Fatalf("%s: expect an event of nothing forgotten, got %+v", id, e)
+		}
+	}
+
+	// A disabled key (graceful first) is still deleted by an immediate Forget.
+	if err := p.Encrypt(ctx, &auditRecord{ID: "u2", Email: "b@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Forget(ctx, "u2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Forget(ctx, "u2", Immediately()); err != nil {
+		t.Fatalf("immediate after graceful: %v", err)
+	}
+	if e := a.last(t); !e.HadKey || !e.Immediate || !e.FinalAt.Equal(e.At) {
+		t.Fatalf("expect the disabled key deleted now, got %+v", e)
+	}
+	if err := p.Recover(ctx, "u2"); err == nil {
+		t.Fatal("expect no Recover after an immediate Forget")
+	}
+}
