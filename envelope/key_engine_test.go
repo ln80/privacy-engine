@@ -121,3 +121,44 @@ func TestKeyEngineRefusesBadWrappers(t *testing.T) {
 		t.Fatalf("expect core.ErrGetKeyFailure and no keys, got %v, %v, %v", keys, missing, err)
 	}
 }
+
+func TestNewKeyEngineRefusesNil(t *testing.T) {
+	for name, build := range map[string]func(){
+		"nil wrapper": func() { envelope.NewKeyEngine(nil, memory.NewKeyEngine()) },
+		"nil store":   func() { envelope.NewKeyEngine(memory.NewKeyWrapper(), nil) },
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s: expect a panic", name)
+				}
+			}()
+			build()
+		}()
+	}
+}
+
+// The janitor runs on the store: a key disabled past the grace period is
+// gone from it, not only reported DELETED.
+func TestKeyEngineDelegatesDeleteUnusedKeys(t *testing.T) {
+	ctx := t.Context()
+	const grace = 50 * time.Millisecond
+	store := memory.NewKeyEngine(memory.WithGracePeriod(grace))
+	eng := envelope.NewKeyEngine(memory.NewKeyWrapper(), store)
+	if _, err := eng.GetOrCreateKeys(ctx, "ns", []string{"a"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.DisableKey(ctx, "ns", "a"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(grace + 20*time.Millisecond)
+	if err := eng.DeleteUnusedKeys(ctx, "ns"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReEnableKey(ctx, "ns", "a"); !errors.Is(err, core.ErrKeyNotFound) {
+		t.Fatalf("expect the store to have deleted the key, got %v", err)
+	}
+	if eng.Origin() != store {
+		t.Fatal("Origin must be the store")
+	}
+}
