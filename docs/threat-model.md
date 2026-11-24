@@ -21,7 +21,7 @@
 | ID | Threat | Mitigation | Residual |
 |---|---|---|---|
 | T1 | Copy of the data store (backup, injection, snapshot) | Application-level encryption (§3) | Which records share a subject |
-| T2 | DBA with the key store | Wrapped DEKs; no unwrap rights (R-KW-2, §4) | **Everything, if DEKs are stored unwrapped** |
+| T2 | DBA with the key store | Wrapped DEKs; no unwrap rights (R-KW-2, §4); blobs unforgeable without KMS rights (R-KW-7) | **Everything, if DEKs are stored unwrapped** |
 | T3 | Admin with KMS **and** store rights | Separation of duties, KMS policy and logs | A deployment flaw |
 | T4 | Compromised application | Narrow roles with separate credentials, short cache TTL, per-tenant KEKs | Out of scope (§5) |
 | T5 | Write access to data | Authenticated encryption, namespace in AAD (R-CS-7, 8) | Swapping two values of one subject ([wire-format.md](wire-format.md#7-accepted-risks)) |

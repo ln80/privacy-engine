@@ -504,7 +504,7 @@ func (p *Protector) forget(ctx context.Context, subID string, cfg ForgetConfig, 
 	if graceful {
 		keyErr = p.cfg.KeyEngine.DisableKey(ctx, p.namespace, subID)
 	} else {
-		keyErr = p.cfg.KeyEngine.DeleteKey(ctx, p.namespace, subID)
+		keyErr = p.deleteSubjectKey(ctx, subID)
 	}
 	if keyErr != nil && !errors.Is(keyErr, core.ErrKeyNotFound) {
 		return keyErr
@@ -520,6 +520,25 @@ func (p *Protector) forget(ctx context.Context, subID string, cfg ForgetConfig, 
 	// a token never used as a subject has only the latter.
 	if keyErr != nil && !hadEntry {
 		return keyErr
+	}
+	return nil
+}
+
+// deleteSubjectKey deletes the subject's key for an immediate Forget. It
+// returns core.ErrKeyNotFound when there was no key to delete (never created,
+// purged, or already deleted), as DisableKey does in graceful mode:
+// DeleteKey itself succeeds on such IDs and cannot tell.
+func (p *Protector) deleteSubjectKey(ctx context.Context, subID string) error {
+	_, missing, err := p.cfg.KeyEngine.GetKeys(ctx, p.namespace, []string{subID})
+	if err != nil {
+		return err
+	}
+	state, absent := missing[subID]
+	if err := p.cfg.KeyEngine.DeleteKey(ctx, p.namespace, subID); err != nil {
+		return err
+	}
+	if absent && state != core.StateDisabled {
+		return fmt.Errorf("%w: no key to delete (%s)", core.ErrKeyNotFound, state)
 	}
 	return nil
 }

@@ -15,10 +15,11 @@ import (
 
 // TokenEngineTestConfig configures TestTokenEngine.
 type TokenEngineTestConfig struct {
-	// GracePeriod declares an engine that erases records forgotten longer
-	// than it ago by itself, for example through a storage TTL. Zero skips
-	// R-TE-5. Other subtests forget records up to two hours in the past and
-	// expect them restorable, so it must exceed three hours.
+	// GracePeriod is the engine's grace period: a record forgotten longer
+	// than it ago must read ERASED, with no sealed value, whether or not
+	// EraseForgotten ran (R-TE-5). Zero skips R-TE-5. Other subtests forget
+	// records up to two hours in the past and expect them restorable, so it
+	// must exceed three hours.
 	GracePeriod time.Duration
 
 	// SealedProbe reads the backend's storage directly, bypassing the

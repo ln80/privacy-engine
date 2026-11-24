@@ -7,6 +7,10 @@ Start at [docs/README.md](docs/README.md). To build a backend, follow
 `privacytest` suite against real storage. Use the `memory` engines in tests
 only.
 
+The skills in [skills/](skills/) package these workflows:
+`privacy-engine-integrate` and `privacy-engine-backend`. Install them with
+`npx skills add ln80/privacy-engine`.
+
 ## Working on this repository
 
 | Command | Does |
@@ -20,6 +24,9 @@ Run with `GOWORK=off` if a parent `go.work` exists.
 
 Rules:
 
+- **Skills follow the docs.** A change to a requirement, an option or the
+  public API updates `skills/` in the same commit. Skills point to `docs/`
+  instead of repeating it.
 - **Specs are normative.** A change to behaviour, a format or a contract
   updates the document in `docs/` in the same commit. Requirement IDs are
   never renumbered or reused.

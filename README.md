@@ -96,12 +96,41 @@ them with the `privacytest` conformance suites. Start with:
 - [docs/production.md](docs/production.md): deployment, erasure, backups, monitoring
 - [docs/README.md](docs/README.md): all documentation, including the threat model and formats
 
-Coding agents: see [AGENTS.md](AGENTS.md).
+## Agent Skills
+
+Two [Agent Skills](https://agentskills.io) teach a coding agent to use this
+library correctly. Each reads the docs of the privacy-engine version your
+module uses, and checks its work with the conformance suites.
+
+| Skill | Use it to |
+|---|---|
+| `privacy-engine-integrate` | Encrypt personal data in your structs, wire erasure, tokenization and auditing |
+| `privacy-engine-backend` | Build a key store, KMS key wrapper or token store that passes the conformance suites |
+
+Install them in your repository with the [skills CLI](https://github.com/vercel-labs/skills)
+(Node.js 22.20 or later):
+
+```bash
+npx skills add ln80/privacy-engine
+```
+
+Options: `--skill privacy-engine-backend` installs one skill, `-a claude-code`
+targets one agent, and `-g` installs for your user instead of the project.
+Pin a release with `ln80/privacy-engine@v0.12.0`.
+
+In Claude Code, install them as a plugin instead:
+
+```text
+/plugin marketplace add ln80/privacy-engine
+/plugin install privacy-engine@privacy-engine
+```
+
+Coding agents working on this repository: see [AGENTS.md](AGENTS.md).
 
 ## Limitations
 
 - **Not independently reviewed.** Report issues as described in [SECURITY.md](SECURITY.md).
-- **No key rotation** yet ([details](docs/key-lifecycle.md#5-rotation-not-supported)).
+- **No key rotation** of subject or vault keys, and no job to re-wrap stored keys after a KEK rotation ([details](docs/key-lifecycle.md#5-rotation-not-supported)).
 - **Erasure stops at the library**: plaintext you copy elsewhere, and key
   store backups until they expire, are yours to handle.
 - **Pre-v1 API**: minor releases may break it. Stored data follows the
