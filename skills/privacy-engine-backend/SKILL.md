@@ -1,11 +1,11 @@
 ---
 name: privacy-engine-backend
-description: Build and verify a production storage backend for the Go library github.com/ln80/privacy-engine. Covers a core.KeyEngine key store, a core.KeyWrapper for a KMS or HSM (envelope encryption), and a core.TokenEngine token store, on any database (Postgres, MySQL, SQLite, DynamoDB, Redis, and others). Use when asked to implement a key engine, key store, key wrapper, KMS or HSM integration, token vault or token store for privacy-engine, or to fix failing privacytest conformance tests (subtests named R-KE-*, R-KW-*, R-TE-*, R-EN-*).
+description: Build and verify a production storage backend for the Go library github.com/ln80/privacy-engine. Covers a core.KeyEngine key store, a core.KeyWrapper for a KMS or HSM such as AWS KMS, HashiCorp Vault Transit, Google Cloud KMS or Azure Key Vault (envelope encryption), and a core.TokenEngine token store, on any database (Postgres, MySQL, SQLite, DynamoDB, Redis, and others). Use when asked to implement a key engine, key store, key wrapper, KMS or HSM integration, token vault or token store for privacy-engine, or to fix failing privacytest conformance tests (subtests named R-KE-*, R-KW-*, R-TE-*, R-EN-*).
 license: Apache-2.0
-compatibility: Requires Go 1.25 or later and a Go module depending on github.com/ln80/privacy-engine v0.11.0 or later.
+compatibility: Requires Go 1.25 or later and a Go module depending on github.com/ln80/privacy-engine v0.12.0 or later.
 metadata:
   author: ln80
-  version: "0.11"
+  version: "0.12"
 ---
 
 # Build a privacy-engine backend
