@@ -86,8 +86,8 @@ func wrapAAD(namespace, keyID string) ([]byte, error) {
 	}
 	aad := make([]byte, 0, len(wrapLabel)+4+len(namespace)+len(keyID))
 	aad = append(aad, wrapLabel...)
-	aad = binary.BigEndian.AppendUint16(aad, uint16(len(namespace)))
+	aad = binary.BigEndian.AppendUint16(aad, uint16(len(namespace))) // #nosec G115 -- bounded above
 	aad = append(aad, namespace...)
-	aad = binary.BigEndian.AppendUint16(aad, uint16(len(keyID)))
+	aad = binary.BigEndian.AppendUint16(aad, uint16(len(keyID))) // #nosec G115 -- bounded above
 	return append(aad, keyID...), nil
 }
