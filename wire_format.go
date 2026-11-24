@@ -12,7 +12,7 @@ var (
 	ErrInvalidWireFormat = errors.New("invalid wire format")
 )
 
-// Field wire format v2 (docs/wire-format-v2.md):
+// Field wire format v2 (docs/wire-format.md):
 //
 //	value   = "ENC." base64url(subjectID) "." base64url(payload)      (no padding)
 //	payload = alg (1) | keyVersion (4, BE) | ciphertext

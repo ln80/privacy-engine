@@ -1,297 +1,110 @@
 privacy-engine
-============
+==============
 [![Go Module](https://github.com/ln80/privacy-engine/actions/workflows/module.yml/badge.svg)](https://github.com/ln80/privacy-engine/actions/workflows/module.yml)
 [![GoDoc](https://godoc.org/github.com/ln80/privacy-engine?status.svg)](https://godoc.org/github.com/ln80/privacy-engine)
 
-A Go library for field-level encryption, crypto-shredding, and tokenization of sensitive data in structs. Built on top of [struct-sensitive](https://github.com/ln80/struct-sensitive), it uses struct tags to identify PII fields and applies AES-256-GCM encryption per data subject.
+Field-level encryption, crypto-shredding and tokenization for Go structs.
 
-Designed for immutable stores (event logs, audit trails) where you can't delete records but need to comply with data erasure requirements (GDPR Article 17) via cryptographic erasure.
-
-## Installation
+Each data subject gets its own key. Delete the key and the subject's data is
+unreadable everywhere it was copied: event logs, audit trails, backups. Made
+for stores you cannot edit, where erasure (GDPR Art. 17) must still work.
 
 ```bash
 go get github.com/ln80/privacy-engine
 ```
 
-## Features
-
-- **Field-level encryption** using AES-256-GCM with per-subject data encryption keys (DEK)
-- **Crypto-shredding** with graceful mode: disable keys first, recover within a grace period, then hard-delete
-- **Streaming encryption** for large payloads with chunk-based authenticated encryption
-- **Tokenization** to replace sensitive identifiers with opaque surrogate tokens
-- **Key derivation** via HKDF-SHA256 for purpose-scoped keys from a subject's DEK
-- **Multi-tenancy** with namespace isolation and a Factory for managing Protector instances
-- **Pluggable backends** via `KeyEngine`, `Encryptor`, and `TokenEngine` interfaces
-
-## Quick Start
+## Quick start
 
 ```go
-import (
-    "context"
-
-    "github.com/ln80/privacy-engine"
-    "github.com/ln80/privacy-engine/memory"
-)
-
 type User struct {
-    ID      string `pii:"subjectID"`
-    Email   string `pii:"data,replace=redacted"`
-    Country string
+    ID    string `pii:"subjectID"`
+    Email string `pii:"data,replace=redacted"`
 }
 
-func main() {
-    ctx := context.Background()
-    protector := privacy.NewProtector("my-namespace", memory.NewKeyEngine())
+p := privacy.NewProtector("tenant-1", memory.NewKeyEngine()) // memory: tests only
 
-    user := User{ID: "user-123", Email: "alice@example.com", Country: "BE"}
+u := User{ID: "user-123", Email: "alice@example.com"}
+_ = p.Encrypt(ctx, &u) // u.Email = "ENC.dXNlci0xMjM.AQAAAAF..."
+stored := u            // what your database holds
 
-    // Encrypt PII fields in-place
-    _ = protector.Encrypt(ctx, &user)
-    // user.Email is now: "ENC..dXNlci0xMjM=.Base64CipherText..."
-    // user.Country is unchanged
+_ = p.Decrypt(ctx, &u) // u.Email = "alice@example.com"
 
-    // Decrypt back
-    _ = protector.Decrypt(ctx, &user)
-    // user.Email is "alice@example.com" again
-
-    // Crypto-shred: forget the subject's key
-    _ = protector.Encrypt(ctx, &user)
-    _ = protector.Forget(ctx, "user-123")
-    _ = protector.Decrypt(ctx, &user)
-    // user.Email is now "redacted" (from the replace tag option)
-
-    // Forget is graceful by default: Recover works until the grace period
-    // ends. Immediately() erases at once, for this call only.
-    _ = protector.Forget(ctx, "user-456", privacy.Immediately())
-}
+_ = p.Forget(ctx, "user-123") // graceful: Recover works until the grace period ends
+_ = p.Decrypt(ctx, &stored)   // stored.Email = "redacted"
 ```
 
-## Struct Tags
+| Tag | Meaning |
+|---|---|
+| `pii:"subjectID"` | The field holding the subject ID |
+| `pii:"data"` | Encrypt this field |
+| `pii:"data,replace=X"` | Show `X` once the subject is forgotten |
+| `pii:"dive"` | Recurse into a nested struct |
 
-Fields are tagged using `pii`, `sensitive`, or `sens` (interchangeable):
+`sensitive` and `sens` work as tag names too.
 
-| Tag | Purpose | Example |
-|-----|---------|---------|
-| `subjectID` | Identifies the data subject (one per struct; see below for nested subjects) | `pii:"subjectID"` |
-| `data` | Marks a field as sensitive | `pii:"data"` |
-| `data,replace=X` | Replacement value when the subject is forgotten | `pii:"data,replace=deleted"` |
-| `dive` | Recurse into nested structs | `pii:"dive"` |
-
-> **Subject IDs must be pseudonymous.** Use a random ID or a token from the
-> tokenizer, never an email, a name or another direct identifier. Every
-> encrypted value names its subject in clear (see [Wire Format](#wire-format)),
-> just as the record's own `subjectID` field does. To key data on an email,
-> tokenize the email first and use the token as the subject, as in the example
-> below.
-
-### One subject or several per record
-
-By default `Encrypt` requires each record to use one subject, so forgetting that subject erases all of the record's personal data. A record whose data belongs to several subjects (for example an embedded author with its own `subjectID`) fails with struct-sensitive's `ErrMultipleSubjectID`. To allow it, encrypting each field under the nearest declared subject:
-
-```go
-p := privacy.NewProtector("tenant", engine, privacy.WithMultipleSubjects())
-```
-
-`Decrypt` reads the subject from each value and accepts either.
-
-## Architecture
-
-```
-┌──────────────┐
-│  Protector   │  ← Main API: Encrypt, Decrypt, Forget, Recover, Tokenize
-└──────┬───────┘
-       │
-  ┌────┴─────┐    ┌────────────┐    ┌──────────────┐
-  │KeyEngine │    │ Encryptor  │    │ TokenEngine  │
-  │(keys CRUD)│   │(AES-256-GCM)│  │(value↔token) │
-  └──────────┘    └────────────┘    └──────────────┘
-```
-
-- **Protector** (`*privacy.Protector`, from `NewProtector`) is the main API. Code that needs only part of it can accept a role interface instead:
-
-  | Interface | Methods | Typical user |
-  |---|---|---|
-  | `Encrypter` | `Encrypt`, `Decrypt`, `EncryptStream`, `DecryptStream` | Repositories, event store decorators |
-  | `Shredder` | `Forget`, `Recover`, `DeleteToken`, `Purge` | Erasure and account-deletion flows |
-  | `Tokenizer` | `Tokenize` | Ingestion: create pseudonyms, never reveal them |
-  | `Reidentifier` | `Detokenize`, `ListTokens` | The few places that show values back |
-
-  Handing a service a `Tokenizer` rather than the `*Protector` makes least privilege visible in review and keeps test fakes small. It is not a security boundary: separate credentials are.
-- **KeyEngine** manages encryption key lifecycle (create, get, disable, re-enable, delete). The `memory` package provides one for tests; production backends implement the interface (see [Backends](#backends)).
-- **Encryptor** handles the actual encryption. Default: AES-256-GCM with random nonces; the AAD binds the namespace, the key version and the algorithm ID (`core.Binding`).
-- **TokenEngine** stores the token vault for pseudonymization: opaque sealed records and blind-index entries, never values in clear. Optional.
+> **Subject IDs must be pseudonymous**: a random ID or a token, never an
+> email or a name. Encrypted values name their subject in clear.
 
 ## Tokenization
 
-Replace sensitive identifiers with opaque tokens early in the pipeline:
+Replace an identifier with a random token, and use the token as the subject:
 
 ```go
-tokens, _ := protector.Tokenize(ctx, privacy.TokenDataSlice("alice@example.com"), privacy.WithPrefix("sub_"))
-surrogateID := tokens.Get("alice@example.com").Token
-// Use surrogateID downstream instead of the real email
+p := privacy.NewProtector("tenant-1", keys, privacy.WithTokenEngine(tokens))
+
+res, _ := p.Tokenize(ctx, privacy.TokenDataSlice("alice@example.com"), privacy.WithPrefix("sub_"))
+id := res.Get("alice@example.com").Token // "sub_…", same token for the same value
+
+vals, _ := p.Detokenize(ctx, []string{id})
+_ = p.Forget(ctx, id) // hides the value and shreds data encrypted under id
 ```
 
-Tokens are random (UUIDv4 by default); a custom `TokenGenFunc` never receives
-the value, so tokens cannot be derived from it. The same value always gets the
-same token in a namespace, until that token is forgotten.
-
-The vault never holds a value in clear. Each namespace has one vault key
-(`@vault`, kept by the key engine like any DEK); two keys are derived from it:
-one seals each value (AES-256-GCM, bound to its token and namespace), the other
-computes the keyed blind index that `Tokenize` looks values up by. The vault
-is as strong as the key engine that holds `@vault`: wrapped by KMS, a reader
-of the table without `kms:Decrypt` sees tokens and ciphertext only; without a
-key wrapper, sealing keeps values out of keys and indexes but is not a
-security boundary. KMS is optional.
-
-| Call | Effect on a token |
-|---|---|
-| `Forget(token)`, graceful (default) | Hidden at once: `Detokenize` omits it, `ListTokens` shows it `FORGOTTEN` without its value, and the value no longer finds it, so the same person tokenized again gets a **new** token. The sealed value is kept for `Recover` until the grace period ends: the token engine then erases it, by itself or when a janitor runs `TokenEngine.EraseForgotten` |
-| `Forget(token)`, immediate (`GracefulMode = false`, or `Forget(token, Immediately())` for one call) | Erased: the sealed value is deleted (`ERASED`) |
-| `Recover(token)` | A forgotten token becomes active again; if the value was tokenized again meanwhile, it stays with the newer token |
-| `DeleteToken(token)` | The mapping is deleted; the subject's data is not erased (use `Forget`) |
-| `PurgeNamespace` (`Protector.Purge`) | Every token and the vault key are deleted |
-
-IDs starting with `@` are reserved for the library and refused as subject IDs
-and tokens. The full design, and the contract a `TokenEngine` must follow, is
-in [docs/token-vault.md](docs/token-vault.md).
-
-## Streaming Encryption
-
-For large payloads (files, attachments):
+## Streams
 
 ```go
-encReader, _ := protector.EncryptStream(ctx, "user-123", plaintextReader)
-// encReader emits authenticated ciphertext in 64 KiB segments
-
-decReader, _ := protector.DecryptStream(ctx, "user-123", encReader)
-// decReader emits the original plaintext
+enc, _ := p.EncryptStream(ctx, "user-123", file)
+dec, _ := p.DecryptStream(ctx, "user-123", enc)
 ```
 
-Streams use the STREAM construction (as in Tink and age): each stream gets its own
-key derived from the subject's key, and every segment is bound to its position, to
-the header and to whether it is the last one. Truncation, reordering, dropped or
-appended segments, and header edits all fail with `ErrDecryptionFailure`.
+Plaintext is released per authenticated segment: trust the output only once
+`Read` returns `io.EOF`.
 
-Plaintext is released one authenticated segment at a time, so a damaged stream
-yields its first intact segments and then an error. Treat the output as valid only
-once `Read` returns `io.EOF`, for example by writing to a temporary location and
-committing on success. The readers hold no goroutine, so an abandoned stream leaks
-nothing.
+## Options
 
-## Factory & Monitoring
-
-For multi-tenant applications, use the Factory to manage one Protector per namespace:
-
-```go
-factory := privacy.NewFactory(func(namespace string) *privacy.Protector {
-    return privacy.NewProtector(namespace, keyEngine, opts...)
-})
-
-// Periodically clears key caches and evicts idle protectors
-factory.Monitor(ctx)
-
-protector, clearFn := factory.Instance("tenant-abc")
-defer clearFn()
-```
-
-## Configuration
-
-`NewProtector` accepts options:
-
-```go
-p := privacy.NewProtector("tenant", keyEngine,
-    privacy.WithTokenEngine(tokenEngine),
-    privacy.WithCacheTTL(30*time.Second),
-    privacy.WithAuditor(auditor),
-)
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `WithCacheTTL(d)` / `WithoutCache()` | cache on, `20s` | Cache keys in memory (the token engine is not cached; the vault key is cached with the other keys). The TTL bounds erasure latency across instances: a subject forgotten elsewhere stops decrypting here within it |
-| `WithImmediateErasure()` | graceful | Every `Forget` erases at once, with no recovery. By default keys are disabled first and recoverable for the grace period; `Forget(id, Immediately())` erases at once for one call |
-| `WithTokenEngine(e)` | none | Token engine for pseudonymization |
-| `WithAuditor(a)` | none | Receives an audit event for erasures and re-identifications (see [Audit events](#audit-events)) |
-| `WithMultipleSubjects()` | off | Allow several subjects per struct (see above) |
-| `WithForgottenValue(v)` | `""` | Value of a forgotten field whose tag has no `replace=` |
+| Option | Default | |
+|---|---|---|
+| `WithTokenEngine(e)` | none | Enables tokenization |
+| `WithCacheTTL(d)`, `WithoutCache()` | 20 s | Key cache; bounds cross-instance erasure delay |
+| `WithImmediateErasure()` | graceful | `Forget` erases at once; `Immediately()` does it per call |
+| `WithAuditor(a)` | none | Events for erasure and re-identification |
+| `WithMultipleSubjects()` | off | Several subjects in one struct |
+| `WithForgottenValue(v)` | `""` | Placeholder when the tag has no `replace=` |
 | `WithEncryptor(e)` | AES-256-GCM | Encryption algorithm |
 
-An option is a `func(*privacy.ProtectorConfig)`, so a closure that sets
-`ProtectorConfig` fields works as well. `NewFactory` takes `WithIdleTimeout`
-and `WithMonitorPeriod`; the in-memory key engine takes
-`memory.WithGracePeriod`.
+For many tenants, `privacy.NewFactory` keeps one `Protector` per namespace
+and evicts idle ones. Code that needs only part of the API can take a role
+interface: `Encrypter`, `Shredder`, `Tokenizer` or `Reidentifier`.
 
-## Backends
+## Production
 
-The `memory` package holds in-memory `KeyEngine` and `TokenEngine` implementations for tests. For production, implement the interfaces in `core` against your store and run the conformance suites in `privacytest` against it:
+The `memory` engines are for tests. In production you implement the storage
+contracts in `core` (a key store, a KMS-backed key wrapper, a token store)
+and prove them with the `privacytest` conformance suites. Start with:
 
-```go
-func TestMyKeyEngine(t *testing.T) {
-    privacytest.RunKeyEngineTest(t, ctx, mystore.NewKeyEngine(...), func(c *privacytest.KeyEngineTestConfig) {
-        c.GracePeriod = 2 * time.Second
-    })
-}
+- [docs/implementing-backends.md](docs/implementing-backends.md): what a backend must do
+- [docs/production.md](docs/production.md): deployment, erasure, backups, monitoring
+- [docs/README.md](docs/README.md): all documentation, including the threat model and formats
 
-func TestMyTokenEngine(t *testing.T) {
-    privacytest.RunTokenEngineTest(t, ctx, mystore.NewTokenEngine(...))
-}
-```
+Coding agents: see [AGENTS.md](AGENTS.md).
 
-A production key engine should wrap data keys with a key encryption key held outside the store (a KMS or HSM): crypto-shredding and the token vault are only as strong as the key engine. Graceful `Forget` completes when the grace period ends: either the engine erases by itself (a storage TTL), or a scheduled job calls `KeyEngine.DeleteUnusedKeys` and `TokenEngine.EraseForgotten`.
+## Limitations
 
-## Audit events
-
-Erasure and re-identification must be provable (GDPR Art. 5(2) and 17). Set an
-`Auditor` and the protector hands it one `AuditEvent` per call of `Forget`,
-`Recover`, `DeleteToken`, `Purge`, `Detokenize`, `ListTokens` and
-`DeriveSubjectKey`, successful or not. Events never carry values or keys;
-the actor and the reason come from your `ctx`.
-
-```go
-p := privacy.NewProtector("tenant", engine, privacy.WithAuditor(
-    privacy.AuditorFunc(func(ctx context.Context, e privacy.AuditEvent) error {
-        slog.InfoContext(ctx, "privacy audit", "op", e.Op, "subject", e.Subject,
-            "final_at", e.FinalAt, "revealed", len(e.Revealed), "err", e.Err)
-        return nil
-    }),
-))
-```
-
-A Forget event says when erasure is final (`FinalAt`), from the grace period
-the engines report through `core.GracePeriodReporter`. If the auditor fails,
-`Detokenize`, `ListTokens` and `DeriveSubjectKey` return nothing; the other
-calls are applied and return `ErrAuditFailure`, so retry them. The full
-design is in [docs/audit-events.md](docs/audit-events.md).
-
-## Wire Format
-
-Encrypted field values are stored as:
-
-```
-ENC.<base64url(subjectID)>.<base64url(alg | keyVersion | nonce | ciphertext | tag)>
-```
-
-The value names the subject whose key encrypted it, so it can be decrypted
-into any struct and keeps following that subject when copied. The algorithm
-ID and key version are authenticated with the namespace. Only this format is
-parsed. The full specification is in [docs/wire-format-v2.md](docs/wire-format-v2.md).
-
-| On `Encrypt`, a field that… | Result |
-|---|---|
-| is plaintext | encrypted under the field's subject |
-| is already encrypted and authenticates under its subject's key | kept as is (idempotent) |
-| is encrypted for a forgotten subject | kept as is (it is shredded) |
-| looks encrypted but does not authenticate | `ErrValueNotAuthentic` |
-| names a subject unknown in the namespace | `ErrKeyUnknown` |
-
-| On `Decrypt`, the value's subject key is… | Result |
-|---|---|
-| active | plaintext; a value that does not authenticate is an error |
-| disabled or deleted (forgotten) | the tag's `replace=` value, or `ProtectorConfig.ForgottenValue` |
-| unknown (never created, purged, wrong namespace) | `ErrKeyUnknown`, field untouched |
-
-Every struct is all-or-nothing: on error, none of its fields change.
+- **Not independently reviewed.** Report issues as described in [SECURITY.md](SECURITY.md).
+- **No key rotation** yet ([details](docs/key-lifecycle.md#5-rotation-not-supported)).
+- **Erasure stops at the library**: plaintext you copy elsewhere, and key
+  store backups until they expire, are yours to handle.
+- **Pre-v1 API**: minor releases may break it. Stored data follows the
+  [versioning rules](docs/wire-format.md#8-versioning-and-compatibility).
 
 ## License
 
