@@ -295,4 +295,4 @@ Every struct is all-or-nothing: on error, none of its fields change.
 
 ## License
 
-MIT
+Apache License 2.0. See [LICENSE](LICENSE).
