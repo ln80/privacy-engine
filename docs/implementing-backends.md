@@ -86,7 +86,7 @@ value. Design: [token-vault.md](token-vault.md).
 | R-TE-2 | `Insert` writes record and index entry together or not at all, if the token is new (`ErrTokenExists`) and the index free (`*IndexTakenError`) |
 | R-TE-3 | `Forget`, `Erase` and `DeleteToken` remove the index entry only if it still points to the token |
 | R-TE-4 | `Forget` keeps the first time; `Restore` re-indexes only a free index and fails with `ErrTokenErased` on an erased record; `Erase` removes the sealed value |
-| R-TE-5 | A record forgotten for the grace period or longer reads `ERASED`, without sealed value, whether or not `EraseForgotten` ran |
+| R-TE-5 | The store has a grace period: a record forgotten for it or longer reads `ERASED`, without sealed value, whether or not `EraseForgotten` ran. It reports the period through `core.GracePeriodReporter`, so a token's Forget event states `FinalAt` |
 | R-TE-6 | `ListTokens` is ordered, prefix-filtered and paged; cursors hold tokens only |
 | R-TE-7 | `PurgeNamespace` removes every record and index entry, idempotently |
 | R-TE-8 | Namespaces are isolated |
@@ -120,7 +120,11 @@ func TestKeyWrapper(t *testing.T) {
 }
 
 func TestTokenStore(t *testing.T) {
-    privacytest.TestTokenEngine(t, mystore.NewTokenEngine(client))
+    privacytest.TestTokenEngine(t, mystore.NewTokenEngine(client, mystore.WithGracePeriod(7*24*time.Hour)),
+        func(c *privacytest.TokenEngineTestConfig) {
+            c.GracePeriod = 7 * 24 * time.Hour             // R-TE-5; must exceed three hours
+            c.SealedProbe = mystore.ProbeSealed(client) // reads storage directly
+        })
 }
 ```
 
