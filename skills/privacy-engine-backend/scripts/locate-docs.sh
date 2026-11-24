@@ -14,7 +14,7 @@ if ! command -v go >/dev/null 2>&1; then
 	exit 1
 fi
 
-version=$(go list -m -f '{{.Version}}' "$mod" 2>/dev/null || true)
+version=$(go list -m -f '{{.Version}}{{with .Replace}} (replaced by {{.Path}}{{with .Version}}@{{.}}{{end}}){{end}}' "$mod" 2>/dev/null || true)
 dir=$(go list -m -f '{{.Dir}}' "$mod" 2>/dev/null || true)
 if [ -z "$dir" ] && [ -n "$version" ]; then
 	go mod download "$mod" >/dev/null 2>&1 || true
