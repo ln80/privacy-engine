@@ -2,10 +2,10 @@
 
 ## Using this library in another project
 
-Read [docs/README.md](docs/README.md) first; it maps tasks to documents. To
-build a backend, follow [docs/implementing-backends.md](docs/implementing-backends.md)
-and make the `privacytest` conformance suite pass against real storage.
-Never use the `memory` engines outside tests.
+Start at [docs/README.md](docs/README.md). To build a backend, follow
+[docs/implementing-backends.md](docs/implementing-backends.md) and pass the
+`privacytest` suite against real storage. Use the `memory` engines in tests
+only.
 
 ## Working on this repository
 
