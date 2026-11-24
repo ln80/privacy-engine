@@ -40,7 +40,7 @@ const (
 	OpForget      AuditOp = "subject.forget"
 	OpRecover     AuditOp = "subject.recover"
 	OpDeriveKey   AuditOp = "subject.derive_key"
-	OpDetokenize  AuditOp = "token.detokenize"
+	OpDetokenize  AuditOp = "token.detokenize" // #nosec G101 -- an operation name, not a credential
 	OpListTokens  AuditOp = "token.list"
 	OpDeleteToken AuditOp = "token.delete"
 	OpPurge       AuditOp = "namespace.purge"
