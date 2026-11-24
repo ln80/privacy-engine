@@ -116,7 +116,7 @@ npx skills add ln80/privacy-engine
 
 Options: `--skill privacy-engine-backend` installs one skill, `-a claude-code`
 targets one agent, and `-g` installs for your user instead of the project.
-Pin a release with `ln80/privacy-engine@v0.11.2`.
+Pin a release with `ln80/privacy-engine@v0.12.0`.
 
 In Claude Code, install them as a plugin instead:
 
@@ -130,7 +130,7 @@ Coding agents working on this repository: see [AGENTS.md](AGENTS.md).
 ## Limitations
 
 - **Not independently reviewed.** Report issues as described in [SECURITY.md](SECURITY.md).
-- **No key rotation** yet ([details](docs/key-lifecycle.md#5-rotation-not-supported)).
+- **No key rotation** of subject or vault keys, and no job to re-wrap stored keys after a KEK rotation ([details](docs/key-lifecycle.md#5-rotation-not-supported)).
 - **Erasure stops at the library**: plaintext you copy elsewhere, and key
   store backups until they expire, are yours to handle.
 - **Pre-v1 API**: minor releases may break it. Stored data follows the

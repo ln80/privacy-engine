@@ -59,21 +59,31 @@ type KeyWrapper interface {
 
 | ID | Requirement |
 |---|---|
-| R-KW-1 | A wrapped DEK unwraps only under its namespace and key ID (KMS encryption context, or AEAD AAD) |
+| R-KW-1 | A wrapped DEK unwraps only under its namespace and key ID: through the KMS's authenticated context (encryption context, additional authenticated data), or, where the wrap operation has none, by wrapping `core.BindDataKey(dek, namespace, keyID)` and opening it with `core.UnbindDataKey` |
 | R-KW-2 | The KEK never leaves the KMS or HSM; plaintext DEKs never reach storage or logs |
 | R-KW-3 | DEKs are 32 bytes from the KMS, HSM or `crypto/rand` |
 | R-KW-4 | A tampered or truncated blob never unwraps to another key: it fails, or yields the original key if only non-secret metadata changed. Another key's blob fails |
 | R-KW-5 | The binding of stored keys never changes; version it |
 | R-KW-6 | When two processes create one key at once, only the stored blob's DEK is used: the loser unwraps the winner's blob. `envelope.KeyEngine` does this |
+| R-KW-7 | The KEK is symmetric (AES). A KEK with a public key (RSA, EC) is refused: anyone holding the public key and write access to the key store could plant a DEK of their choosing, and new data would be encrypted under it |
 
 Deployment:
 
-- Scope the application's KMS rights to the binding (for example a condition
-  on the namespace).
+- Scope the application's KMS rights to the binding where the KMS can
+  condition on it (AWS KMS encryption context); otherwise use one KEK per
+  tenant and scope rights per key.
 - KMS logs show the binding in clear; map subject IDs to opaque references if
   that matters.
 - A KEK per tenant lets one KEK deletion shred a tenant, backups included.
   Guard KEK deletion with the KMS's waiting period and alerts.
+- R-KW-7 is not checked by `TestKeyWrapper`: review the KEK's key type.
+- Rotating the KEK in the KMS keeps old versions decrypting. The library has
+  no job to re-wrap stored DEKs under the new version; write one if your
+  policy requires it.
+
+The contract was checked against AWS KMS, HashiCorp Vault Transit, Google
+Cloud KMS and Azure Key Vault; the backend skill's key-wrapper reference
+maps each to these requirements.
 
 ## 4. Token store: `core.TokenEngine`
 

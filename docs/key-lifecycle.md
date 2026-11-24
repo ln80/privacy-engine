@@ -69,6 +69,6 @@ Neither DEKs nor `@vault` rotate. Values carry an authenticated
 
 | Need | Do |
 |---|---|
-| Rotate the KEK | Use KMS rotation or re-wrap the DEKs. Data is untouched |
+| Rotate the KEK | Use KMS rotation: old KEK versions keep decrypting. The library has no job to re-wrap stored DEKs under the new version; write one if your policy requires it. Data is untouched |
 | A DEK is exposed | `Forget` immediately, re-encrypt under a new subject ID |
 | `@vault` is exposed | Tokenize into a new namespace, `Purge` the old one |
