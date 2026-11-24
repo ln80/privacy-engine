@@ -1,0 +1,14 @@
+{
+  "name": "privacy-engine",
+  "description": "Agent Skills for github.com/ln80/privacy-engine: integrate it into a Go service, and build production key stores, KMS key wrappers and token stores that pass its conformance suites.",
+  "owner": { "name": "ln80" },
+  "plugins": [
+    {
+      "name": "privacy-engine",
+      "source": "./",
+      "description": "Skills to integrate privacy-engine and build its storage backends.",
+      "category": "development",
+      "tags": ["go", "privacy", "encryption", "crypto-shredding", "gdpr"]
+    }
+  ]
+}
