@@ -151,19 +151,9 @@ purge deletes `@vault` with the other keys.
 
 ## 6. Contract for a `TokenEngine`
 
-A backend implements `core.TokenEngine` and passes `privacytest.RunTokenEngineTest`. Beyond the godoc of each method:
-
-- **Store only what it is given.** Never derive, log or index anything from
-  `Sealed`; `Index` is the only lookup key for values.
-- **`Insert` is atomic and doubly conditioned:** on the token not existing
-  (`ErrTokenExists`) and on the index not pointing to another token
-  (`*IndexTakenError` carrying the winner). Both writes happen or neither.
-- **Index removal is conditional.** `Forget`, `Erase` and `DeleteToken`
-  remove the index entry only if it still points to the token, so a newer
-  mapping is never lost.
-- **Return copies.** Records and slices handed out are owned by the caller.
-- **Every method is safe for concurrent use.**
-- **Paging cursors hold tokens, never values or indexes.**
+A backend implements `core.TokenEngine`, meets requirements R-TE-1 to R-TE-7
+in [implementing-backends.md](implementing-backends.md#4-token-store-coretokenengine)
+and passes `privacytest.RunTokenEngineTest`.
 
 ## 7. Limits and accepted risks
 
