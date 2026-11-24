@@ -1,7 +1,9 @@
 name: Fuzz
 on:
   schedule:
-    - cron: "41 3 * * 0" # weekly
+    # Twice a week: the Actions cache drops entries unused for 7 days, and
+    # each run starts from the corpus the previous one left.
+    - cron: "41 3 * * 0,3"
   workflow_dispatch:
     inputs:
       fuzztime:
@@ -19,6 +21,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - { package: ., target: FuzzDecryptField }
+          - { package: ., target: FuzzEncryptField }
           - { package: ., target: FuzzParseWireValue }
           - { package: ., target: FuzzVaultOpen }
           - { package: ./aes, target: FuzzDecrypt }
@@ -31,6 +35,21 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version: stable
+
+      # The corpus fuzzing builds lives in the Go cache, outside the
+      # repository. Keep each target's between runs.
+      - name: Locate the corpus
+        id: corpus
+        env:
+          PKG: ${{ matrix.package }}
+          TARGET: ${{ matrix.target }}
+        run: echo "dir=$(go env GOCACHE)/fuzz/$(go list "$PKG")/$TARGET" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.corpus.outputs.dir }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
 
       - name: Fuzz
         env:
