@@ -4,7 +4,7 @@
 |---|---|
 | Status | **Specification**, implemented since v0.7.0 |
 | Code | `wire_format.go` (field encoding), `aes/256_gcm.go` and `aes/util.go` (field crypto), `aes/stream.go` (streams), `protector.go` (behaviour) |
-| Compatibility | None. v1 field values, the legacy `<pii:` form and stream v1 are not parsed |
+| Compatibility | Rules in section 9. Formats from before v0.7.0 (v1 field values, the legacy `<pii:` form, stream v1) are not parsed |
 
 ## 1. Key hierarchy
 
@@ -176,3 +176,33 @@ Revision 1 of this design took the subject from the struct instead. It would hav
 | D-C | A value that looks encrypted but does not authenticate under an active key fails `Encrypt` |
 | D-D | Prefix `ENC.`; only v2 is parsed |
 | – | A purged namespace's data decrypts to `ErrKeyUnknown`, not a placeholder |
+
+## 9. Versioning and compatibility
+
+Every stored format carries an identifier, authenticated with the data:
+
+| Format | Identifier | Current | Unchanged since |
+|---|---|---|---|
+| Field value | `ENC.` prefix and `alg` byte | `0x01` | v0.7.0 |
+| Stream | header `version` and `alg` bytes | `2`, `1` | v0.7.0 |
+| Sealed vault value | first byte | `0x01` | v0.8.0 ([token-vault.md](token-vault.md)) |
+| Key derivation | versioned HKDF labels | `…/v2`, `…/v1` | v0.7.0 |
+| Subject key | `keyVersion` | `1` | v0.7.0 |
+
+Rules:
+
+1. **An identifier never changes meaning.** A new construction gets a new
+   identifier; the old one keeps its exact definition.
+2. **Reading outlives writing.** A release may start writing a new
+   identifier, and keeps reading the previous ones.
+3. **From v1.0**, every release reads all data written by earlier releases of
+   the same major version. Dropping read support for an identifier takes a
+   major release, announced one minor release ahead with a migration path
+   (decrypt, then encrypt again).
+4. **Before v1.0**, the current identifiers are intended to become the v1
+   formats. A change that leaves stored data unreadable is called out as
+   breaking in the release notes, with a migration path.
+
+The Go API follows semantic versioning separately: before v1.0, minor
+releases may break it. The `privacytest` suites may gain checks in any
+release; a backend that newly fails one had a latent bug.
