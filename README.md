@@ -7,6 +7,12 @@ A Go library for field-level encryption, crypto-shredding, and tokenization of s
 
 Designed for immutable stores (event logs, audit trails) where you can't delete records but need to comply with data erasure requirements (GDPR Article 17) via cryptographic erasure.
 
+## Documentation
+
+Start at [docs/README.md](docs/README.md): scope and requirements, threat
+model, key lifecycle, how to build a production backend, and production
+guidelines. Coding agents: see [AGENTS.md](AGENTS.md).
+
 ## Installation
 
 ```bash
@@ -47,7 +53,7 @@ func main() {
 
     // Encrypt PII fields in-place
     _ = protector.Encrypt(ctx, &user)
-    // user.Email is now: "ENC..dXNlci0xMjM=.Base64CipherText..."
+    // user.Email is now: "ENC.dXNlci0xMjM.AQAAAAF..." (subject, then ciphertext)
     // user.Country is unchanged
 
     // Decrypt back
@@ -142,7 +148,7 @@ computes the keyed blind index that `Tokenize` looks values up by. The vault
 is as strong as the key engine that holds `@vault`: wrapped by KMS, a reader
 of the table without `kms:Decrypt` sees tokens and ciphertext only; without a
 key wrapper, sealing keeps values out of keys and indexes but is not a
-security boundary. KMS is optional.
+security boundary, so wrap keys in production.
 
 | Call | Effect on a token |
 |---|---|
@@ -238,7 +244,7 @@ func TestMyTokenEngine(t *testing.T) {
 }
 ```
 
-A production key engine should wrap data keys with a key encryption key held outside the store (a KMS or HSM): crypto-shredding and the token vault are only as strong as the key engine. Graceful `Forget` completes when the grace period ends: either the engine erases by itself (a storage TTL), or a scheduled job calls `KeyEngine.DeleteUnusedKeys` and `TokenEngine.EraseForgotten`.
+A production key engine must wrap data keys with a key encryption key held in a KMS or HSM: crypto-shredding and the token vault are only as strong as the key engine. [docs/implementing-backends.md](docs/implementing-backends.md) lists every requirement a backend must meet, and [docs/production.md](docs/production.md) how to deploy it. Graceful `Forget` completes when the grace period ends: either the engine erases by itself (a storage TTL), or a scheduled job calls `KeyEngine.DeleteUnusedKeys` and `TokenEngine.EraseForgotten`.
 
 ## Audit events
 
@@ -292,6 +298,20 @@ parsed. The full specification is in [docs/wire-format-v2.md](docs/wire-format-v
 | unknown (never created, purged, wrong namespace) | `ErrKeyUnknown`, field untouched |
 
 Every struct is all-or-nothing: on error, none of its fields change.
+
+## Limitations and security status
+
+- **Not independently reviewed.** The cryptography comes from Go's standard
+  library and `golang.org/x/crypto`; the constructions, formats and erasure
+  guarantees have only been reviewed by their authors. See
+  [SECURITY.md](SECURITY.md) to report a vulnerability.
+- **No key rotation** of subject keys or the vault key yet. KEK rotation in
+  your KMS works ([docs/key-lifecycle.md](docs/key-lifecycle.md#5-rotation-not-supported)).
+- **Erasure stops at the library's edge**: plaintext you copy elsewhere, and
+  key store backups until their retention ends, are yours to handle
+  ([docs/production.md](docs/production.md)).
+- **Pre-v1 API**: minor releases may break it. Stored data follows the
+  [versioning rules](docs/wire-format-v2.md#9-versioning-and-compatibility).
 
 ## License
 
