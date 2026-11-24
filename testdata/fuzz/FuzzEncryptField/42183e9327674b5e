@@ -1,2 +1,0 @@
-go test fuzz v1
-string("ENC.c3ViXzI.AQAAAAEaaa0aa0aaaA")

@@ -1,2 +1,0 @@
-go test fuzz v1
-string("ENC.&Z\x93C\x93\x93#.AQAAiQB")

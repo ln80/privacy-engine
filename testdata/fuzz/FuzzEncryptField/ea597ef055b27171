@@ -1,2 +1,0 @@
-go test fuzz v1
-string("ENC.E.AQA1U1P820hz1vC90000\"100290100000010,2")
