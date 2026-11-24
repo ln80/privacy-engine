@@ -7,7 +7,7 @@ require github.com/google/uuid v1.6.0
 require (
 	github.com/ln80/struct-sensitive v0.8.0
 	github.com/sanity-io/litter v1.5.8
-	golang.org/x/crypto v0.52.0
+	golang.org/x/crypto v0.55.0
 )
 
 require (
