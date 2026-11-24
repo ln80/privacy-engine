@@ -93,7 +93,8 @@ value. Design: [token-vault.md](token-vault.md).
 
 ## 5. Encryptor: `core.Encryptor`
 
-Keep the default unless you must use another construction (FIPS, say).
+Keep the default unless you must use another construction (FIPS, say), and
+run `privacytest.TestEncryptor` on it.
 
 | ID | Requirement |
 |---|---|
