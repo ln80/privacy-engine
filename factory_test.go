@@ -51,7 +51,7 @@ func eventually(t *testing.T, within time.Duration, cond func() bool, format str
 }
 
 func TestFactory(t *testing.T) {
-	protectorCount := func(f *factory) int {
+	protectorCount := func(f *Factory) int {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		return len(f.reg)
@@ -83,7 +83,7 @@ func TestFactory(t *testing.T) {
 		fc.IDLE = idle
 		fc.MonitorPeriod = period
 	})
-	fi := f.(*factory)
+	fi := f
 
 	// init two Protectors & assert registry count
 	_, _ = f.Instance("namespace_1")
@@ -131,7 +131,7 @@ func TestFactory_ClearFuncAfterEviction(t *testing.T) {
 	ctx := context.Background()
 	spy := newSpyCache()
 	p := NewProtector("tenant-evicted", spy)
-	f := NewFactory(func(namespace string) *Protector { return p }).(*factory)
+	f := NewFactory(func(namespace string) *Protector { return p })
 
 	_, clear := f.Instance("tenant-evicted")
 	f.clear(ctx, true) // what Monitor does on shutdown or for an idle entry
