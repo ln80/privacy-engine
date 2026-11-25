@@ -5,7 +5,7 @@ go 1.25.0
 require github.com/google/uuid v1.6.0
 
 require (
-	github.com/ln80/struct-sensitive v0.8.0
+	github.com/ln80/struct-sensitive v0.9.0
 	github.com/sanity-io/litter v1.5.8
 	golang.org/x/crypto v0.55.0
 )
