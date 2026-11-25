@@ -1,4 +1,4 @@
-package privacytest
+package testdouble
 
 import (
 	"bytes"

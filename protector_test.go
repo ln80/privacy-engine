@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/ln80/privacy-engine/core"
+	"github.com/ln80/privacy-engine/internal/testdouble"
 	"github.com/ln80/privacy-engine/memory"
-	"github.com/ln80/privacy-engine/privacytest"
 	sensitive "github.com/ln80/struct-sensitive"
 )
 
@@ -158,7 +158,7 @@ func TestProtector_EncryptDecrypt(t *testing.T) {
 
 		t.Skip("skipping this test as atomicity support has been dropped by now.")
 
-		enc := &privacytest.UnstableEncryptorMock{
+		enc := &testdouble.UnstableEncryptorMock{
 			PointOfFailure: 2,
 		}
 
