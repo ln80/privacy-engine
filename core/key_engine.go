@@ -167,15 +167,6 @@ type KeyEngineWrapper interface {
 	Origin() KeyEngine
 }
 
-// KeyEngineCache is a KetEngine wrapper used for cache purpose.
-type KeyEngineCache interface {
-	KeyEngineWrapper
-
-	// ClearCache invalidates the cache of encryption keys based on a time-to-live configuration.
-	// 'force' parameter allows to bypass the TTL check and immediately invalidates the cache.
-	ClearCache(ctx context.Context, namespace string, force bool) error
-}
-
 // GracePeriodReporter is implemented by key and token engines that erase what
 // was forgotten once a fixed grace period has passed, and enforce that
 // deadline on every read. GracePeriod returns 0 when the engine has none.

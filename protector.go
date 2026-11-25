@@ -13,7 +13,7 @@ import (
 
 	"github.com/ln80/privacy-engine/aes"
 	"github.com/ln80/privacy-engine/core"
-	"github.com/ln80/privacy-engine/memory"
+	"github.com/ln80/privacy-engine/internal/keyengine"
 	sensitive "github.com/ln80/struct-sensitive"
 	"golang.org/x/crypto/hkdf"
 )
@@ -156,8 +156,8 @@ func NewProtector(namespace string, engine core.KeyEngine, opts ...ProtectorOpti
 	}
 
 	if p.cfg.CacheEnabled {
-		if _, ok := p.cfg.KeyEngine.(core.KeyEngineCache); !ok {
-			p.cfg.KeyEngine = memory.NewCacheWrapper(p.cfg.KeyEngine, p.cfg.CacheTTL)
+		if _, ok := p.cfg.KeyEngine.(keyengine.Cache); !ok {
+			p.cfg.KeyEngine = keyengine.NewCache(p.cfg.KeyEngine, p.cfg.CacheTTL)
 		}
 	}
 
@@ -801,7 +801,7 @@ func (p *Protector) Clear(ctx context.Context, force bool) (err error) {
 		}
 	}()
 
-	if cp, ok := p.cfg.KeyEngine.(core.KeyEngineCache); ok {
+	if cp, ok := p.cfg.KeyEngine.(keyengine.Cache); ok {
 		if e := cp.ClearCache(ctx, p.namespace, force); e != nil {
 			err = e
 		}

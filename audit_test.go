@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ln80/privacy-engine/core"
+	"github.com/ln80/privacy-engine/internal/keyengine"
 	"github.com/ln80/privacy-engine/memory"
 )
 
@@ -217,7 +218,7 @@ func TestAudit_DeleteToken(t *testing.T) {
 
 func TestGracePeriodOfThroughCache(t *testing.T) {
 	store := memory.NewKeyEngine(func(c *core.KeyEngineConfig) { c.GracePeriod = auditGrace })
-	if got := core.GracePeriodOf(memory.NewCacheWrapper(store, time.Second)); got != auditGrace {
+	if got := core.GracePeriodOf(keyengine.NewCache(store, time.Second)); got != auditGrace {
 		t.Fatalf("expect %v through the cache wrapper, got %v", auditGrace, got)
 	}
 	if got := core.GracePeriodOf(memory.NewTokenEngine()); got != 0 {

@@ -6,28 +6,28 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ln80/privacy-engine/core"
+	"github.com/ln80/privacy-engine/internal/keyengine"
 	"github.com/ln80/privacy-engine/memory"
 )
 
 // spyCache is a key engine cache that counts ClearCache calls: Protector.Clear
 // ends there, so it shows when the factory clears a protector.
 type spyCache struct {
-	core.KeyEngineCache
+	keyengine.Cache
 
 	mu     sync.Mutex
 	clears int
 }
 
 func newSpyCache() *spyCache {
-	return &spyCache{KeyEngineCache: memory.NewCacheWrapper(memory.NewKeyEngine(), time.Nanosecond).(core.KeyEngineCache)}
+	return &spyCache{Cache: keyengine.NewCache(memory.NewKeyEngine(), time.Nanosecond).(keyengine.Cache)}
 }
 
 func (s *spyCache) ClearCache(ctx context.Context, namespace string, force bool) error {
 	s.mu.Lock()
 	s.clears++
 	s.mu.Unlock()
-	return s.KeyEngineCache.ClearCache(ctx, namespace, force)
+	return s.Cache.ClearCache(ctx, namespace, force)
 }
 
 func (s *spyCache) count() int {

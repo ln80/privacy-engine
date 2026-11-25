@@ -258,7 +258,7 @@ func TestKeyEngine(t *testing.T, eng core.KeyEngine, opts ...func(*KeyEngineTest
 		}
 	})
 
-	if cache, ok := eng.(core.KeyEngineCache); ok && cache.Origin() != nil {
+	if cache, ok := eng.(keyCache); ok && cache.Origin() != nil {
 		run("cache follows its origin after ClearCache", func(k *keyCheck) {
 			id := randomID()
 			k.create(id)
@@ -270,6 +270,13 @@ func TestKeyEngine(t *testing.T, eng core.KeyEngine, opts ...func(*KeyEngineTest
 			k.expect([]string{id}, nil, id)
 		})
 	}
+}
+
+// keyCache is a key engine that caches its origin's keys, such as the
+// Protector's own cache.
+type keyCache interface {
+	core.KeyEngineWrapper
+	ClearCache(ctx context.Context, namespace string, force bool) error
 }
 
 type keyCheck struct {

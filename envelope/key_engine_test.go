@@ -9,6 +9,7 @@ import (
 
 	"github.com/ln80/privacy-engine/core"
 	"github.com/ln80/privacy-engine/envelope"
+	"github.com/ln80/privacy-engine/internal/keyengine"
 	"github.com/ln80/privacy-engine/memory"
 	"github.com/ln80/privacy-engine/privacytest"
 )
@@ -24,7 +25,7 @@ func TestKeyEngineConformance(t *testing.T) {
 		})
 	})
 	t.Run("cache over envelope over store", func(t *testing.T) {
-		privacytest.TestKeyEngine(t, memory.NewCacheWrapper(newEngine(), time.Minute), func(c *privacytest.KeyEngineTestConfig) {
+		privacytest.TestKeyEngine(t, keyengine.NewCache(newEngine(), time.Minute), func(c *privacytest.KeyEngineTestConfig) {
 			c.GracePeriod = grace
 		})
 	})

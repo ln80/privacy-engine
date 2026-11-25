@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/ln80/privacy-engine/core"
+	"github.com/ln80/privacy-engine/internal/keyengine"
 	"github.com/ln80/privacy-engine/memory"
 )
 
@@ -290,7 +291,7 @@ func TestKeyStateErrorsDoNotLeak(t *testing.T) {
 }
 
 // failingCache is a key engine cache whose ClearCache fails.
-type failingCache struct{ core.KeyEngineCache }
+type failingCache struct{ keyengine.Cache }
 
 func (failingCache) ClearCache(context.Context, string, bool) error {
 	return errors.New("clear failed")
@@ -298,7 +299,7 @@ func (failingCache) ClearCache(context.Context, string, bool) error {
 
 // A Clear error names the namespace only: it concerns no subject.
 func TestClearErrorHasNoSubject(t *testing.T) {
-	eng := failingCache{memory.NewKeyEngine().(core.KeyEngineCache)}
+	eng := failingCache{memory.NewKeyEngine().(keyengine.Cache)}
 	p := NewProtector("tenant-x", eng)
 
 	err := p.Clear(context.Background(), true)
