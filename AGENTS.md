@@ -30,6 +30,9 @@ Rules:
 - **Specs are normative.** A change to behaviour, a format or a contract
   updates the document in `docs/` in the same commit. Requirement IDs are
   never renumbered or reused.
+- **The API is stable by rule.** Never add a method to an interface users
+  implement; add an optional interface. See
+  [api-stability.md](docs/api-stability.md).
 - **Formats are permanent.** Never change the meaning of a stored identifier
   (`alg`, stream version, vault byte, HKDF label). See
   [wire-format.md §8](docs/wire-format.md#8-versioning-and-compatibility).

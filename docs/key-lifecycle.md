@@ -64,8 +64,17 @@ meanwhile. `DeleteToken` removes an entry. See [token-vault.md](token-vault.md).
 
 ## 5. Rotation: not supported
 
-Neither DEKs nor `@vault` rotate. Values carry an authenticated
-`keyVersion = 1`, so rotation can come without a format change.
+Neither DEKs nor `@vault` rotate, and v1 does not need them to:
+
+- The KEK, the key a KMS holds, rotates in the KMS. Old KEK versions keep
+  decrypting, so stored DEKs stay readable.
+- Each subject has its own DEK, far below the usage limit of AES-GCM with
+  random nonces (2^32 encryptions per key).
+- Rotating a DEK does not protect data already written, and data in
+  immutable stores cannot be re-encrypted anyway.
+
+Values carry an authenticated `keyVersion = 1`, so rotation can come later
+without a format change, as an optional interface ([api-stability.md](api-stability.md)).
 
 | Need | Do |
 |---|---|
