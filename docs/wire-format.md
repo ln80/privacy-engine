@@ -159,4 +159,4 @@ its subject when copied, and be re-keyed without loading domain types.
    that leaves data unreadable is flagged as breaking, with a migration path.
 
 Formats from before v0.7.0 are not parsed. The Go API versions separately:
-before v1.0, minor releases may break it.
+see [api-stability.md](api-stability.md).

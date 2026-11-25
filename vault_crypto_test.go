@@ -10,7 +10,7 @@ import (
 
 func testVaultKeys(t testing.TB) vaultKeys {
 	t.Helper()
-	dek, err := aes.Key256GenFn(context.Background(), "ns", vaultKeyID)
+	dek, err := aes.GenerateKey(context.Background(), "ns", vaultKeyID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestVaultKeysAreSeparated(t *testing.T) {
 		t.Fatal("expect an error for a 16-byte vault key")
 	}
 	// Deterministic: the same DEK always derives the same keys.
-	dek, _ := aes.Key256GenFn(context.Background(), "ns", vaultKeyID)
+	dek, _ := aes.GenerateKey(context.Background(), "ns", vaultKeyID)
 	a, _ := deriveVaultKeys(dek)
 	b, _ := deriveVaultKeys(dek)
 	if !bytes.Equal(a.indexKey, b.indexKey) || !bytes.Equal(a.sealKey, b.sealKey) {

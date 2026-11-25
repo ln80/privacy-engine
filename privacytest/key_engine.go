@@ -130,7 +130,7 @@ func TestKeyEngine(t *testing.T, eng core.KeyEngine, opts ...func(*KeyEngineTest
 		k.must(k.eng.DeleteKey(k.ctx, k.ns, b), "DeleteKey")
 		keys, err := k.eng.GetOrCreateKeys(k.ctx, k.ns, []string{a, b, c}, nil)
 		k.must(err, "GetOrCreateKeys")
-		if want, got := []string{c}, keys.KeyIDs(); !keysEqual(want, got) {
+		if want, got := []string{c}, keyIDs(keys); !keysEqual(want, got) {
 			k.t.Fatalf("expect keys for %v only, got %v", want, got)
 		}
 		k.expect([]string{c}, core.KeyStates{a: core.StateDisabled, b: core.StateDeleted}, a, b, c)
@@ -258,7 +258,7 @@ func TestKeyEngine(t *testing.T, eng core.KeyEngine, opts ...func(*KeyEngineTest
 		}
 	})
 
-	if cache, ok := eng.(core.KeyEngineCache); ok && cache.Origin() != nil {
+	if cache, ok := eng.(keyCache); ok && cache.Origin() != nil {
 		run("cache follows its origin after ClearCache", func(k *keyCheck) {
 			id := randomID()
 			k.create(id)
@@ -270,6 +270,13 @@ func TestKeyEngine(t *testing.T, eng core.KeyEngine, opts ...func(*KeyEngineTest
 			k.expect([]string{id}, nil, id)
 		})
 	}
+}
+
+// keyCache is a key engine that caches its origin's keys, such as the
+// Protector's own cache.
+type keyCache interface {
+	core.KeyEngineWrapper
+	ClearCache(ctx context.Context, namespace string, force bool) error
 }
 
 type keyCheck struct {
@@ -305,8 +312,8 @@ func (k *keyCheck) create(ids ...string) core.KeyMap {
 	k.t.Helper()
 	keys, err := k.eng.GetOrCreateKeys(k.ctx, k.ns, ids, nil)
 	k.must(err, "GetOrCreateKeys")
-	if !keysEqual(ids, keys.KeyIDs()) {
-		k.t.Fatalf("GetOrCreateKeys: expect keys for %v, got %v", ids, keys.KeyIDs())
+	if !keysEqual(ids, keyIDs(keys)) {
+		k.t.Fatalf("GetOrCreateKeys: expect keys for %v, got %v", ids, keyIDs(keys))
 	}
 	return keys
 }
@@ -319,7 +326,7 @@ func (k *keyCheck) expect(active []string, missing core.KeyStates, ids ...string
 	if active == nil {
 		active = []string{}
 	}
-	if got := keys.KeyIDs(); !keysEqual(active, got) {
+	if got := keyIDs(keys); !keysEqual(active, got) {
 		k.t.Fatalf("GetKeys: expect keys for %v, got %v (missing %v)", active, got, gotMissing)
 	}
 	if len(gotMissing) != len(missing) {

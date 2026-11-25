@@ -36,7 +36,7 @@ func Example() {
 			privacy.WithCacheTTL(15*time.Minute),
 
 			// AES-256-GCM is the default encryptor.
-			privacy.WithEncryptor(aes.New256GCMEncryptor()),
+			privacy.WithEncryptor(aes.NewEncryptor()),
 
 			// Forget is graceful by default: keys are disabled and
 			// recoverable for the grace period. WithImmediateErasure()

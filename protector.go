@@ -13,7 +13,7 @@ import (
 
 	"github.com/ln80/privacy-engine/aes"
 	"github.com/ln80/privacy-engine/core"
-	"github.com/ln80/privacy-engine/memory"
+	"github.com/ln80/privacy-engine/internal/keyengine"
 	sensitive "github.com/ln80/struct-sensitive"
 	"golang.org/x/crypto/hkdf"
 )
@@ -39,6 +39,10 @@ var (
 	// or encrypted elsewhere. Encrypt refuses to keep or re-encrypt it.
 	ErrValueNotAuthentic = newErr("value looks encrypted but does not authenticate")
 
+	// ErrMultipleSubjects means Encrypt found data of several subjects in
+	// one struct, where the Protector allows one (see WithMultipleSubjects).
+	ErrMultipleSubjects = sensitive.ErrMultipleSubjectID
+
 	// ErrReservedSubjectID means a subject ID starts with "@". Those IDs name
 	// the library's own keys (the vault key is "@vault") and cannot be used to
 	// encrypt, forget, recover or derive.
@@ -60,8 +64,8 @@ func checkSubjectID(id string) error {
 	return nil
 }
 
-// ProtectorConfig presents the configuration of Protector service
-type ProtectorConfig struct {
+// protectorConfig is set by ProtectorOption.
+type protectorConfig struct {
 
 	// KeyEngine presents an implementation of core.KeyEngine.
 	// It manages encryption materials' life-cycle.
@@ -77,8 +81,9 @@ type ProtectorConfig struct {
 	// CacheTTL defines the cache's time to live duration.
 	CacheTTL time.Duration
 
-	// GracefulMode allows first to disable the encryption materials during a graceful period.
-	// Therefore recovery may succeed. Otherwise, encryption materials are immediately deleted.
+	// GracefulMode disables keys and hides vault entries on Forget, so
+	// Recover works until the grace period ends. Otherwise Forget erases at
+	// once.
 	GracefulMode bool
 
 	// TokenEngine stores the token vault (core.TokenEngine). It is never
@@ -112,13 +117,13 @@ const subjectKeyVersion uint32 = 1
 // use. Code that needs only part of it can accept one of the role interfaces:
 // Encrypter, Shredder, Tokenizer, Reidentifier.
 //
-// With ProtectorConfig.Auditor set, Forget, Recover, DeleteToken, Purge,
+// With WithAuditor set, Forget, Recover, DeleteToken, Purge,
 // Detokenize, ListTokens and DeriveSubjectKey each emit an AuditEvent. When it
 // cannot be recorded, the first four still apply and return ErrAuditFailure;
 // the last three return nothing.
 type Protector struct {
 	namespace string
-	cfg       *ProtectorConfig
+	cfg       *protectorConfig
 }
 
 // NewProtector returns a Protector service instance.
@@ -135,8 +140,8 @@ func NewProtector(namespace string, engine core.KeyEngine, opts ...ProtectorOpti
 
 	p := &Protector{
 		namespace: namespace,
-		cfg: &ProtectorConfig{
-			Encryptor:    aes.New256GCMEncryptor(),
+		cfg: &protectorConfig{
+			Encryptor:    aes.NewEncryptor(),
 			KeyEngine:    engine,
 			CacheEnabled: true,
 			GracefulMode: true,
@@ -155,8 +160,8 @@ func NewProtector(namespace string, engine core.KeyEngine, opts ...ProtectorOpti
 	}
 
 	if p.cfg.CacheEnabled {
-		if _, ok := p.cfg.KeyEngine.(core.KeyEngineCache); !ok {
-			p.cfg.KeyEngine = memory.NewCacheWrapper(p.cfg.KeyEngine, p.cfg.CacheTTL)
+		if _, ok := p.cfg.KeyEngine.(keyengine.Cache); !ok {
+			p.cfg.KeyEngine = keyengine.NewCache(p.cfg.KeyEngine, p.cfg.CacheTTL)
 		}
 	}
 
@@ -172,8 +177,8 @@ func NewProtector(namespace string, engine core.KeyEngine, opts ...ProtectorOpti
 //
 // Each field is encrypted under its own subject's key. By default a struct
 // must use one subject: a second subjectID that governs data, or differing
-// subject values, fail with struct-sensitive's ErrMultipleSubjectID. Set
-// ProtectorConfig.MultipleSubjects to allow several. A subject whose key is
+// subject values, fail with ErrMultipleSubjects. Set
+// WithMultipleSubjects to allow several. A subject whose key is
 // forgotten fails with ErrSubjectForgotten.
 func (p *Protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) {
 	defer func() {
@@ -275,7 +280,7 @@ func (p *Protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) 
 // left as is. Each value's own subject selects its key:
 //   - active key: the value is decrypted; one that does not authenticate is an error;
 //   - disabled or deleted key (forgotten subject): the field gets the tag's
-//     replace= option, or ProtectorConfig.ForgottenValue;
+//     replace= option, or WithForgottenValue;
 //   - unknown key: ErrKeyUnknown, and the field is left untouched.
 func (p *Protector) Decrypt(ctx context.Context, structPtrs ...any) (err error) {
 	defer func() {
@@ -467,22 +472,15 @@ func (p *Protector) DecryptStreamWithKey(ctx context.Context, key core.Key, r io
 	return p.cfg.Encryptor.DecryptStream(p.callerKeyBinding(), key, r)
 }
 
-// ForgetConfig configures one Forget call.
-type ForgetConfig struct {
-	// Immediate deletes the subject's key material and erases its vault entry
-	// at once, whatever ProtectorConfig.GracefulMode. Recover then fails.
-	Immediate bool
-}
-
-// Immediately makes one Forget call erase at once instead of gracefully: use
-// it where the product promises erasure without a recovery window, such as
-// account deletion.
-func Immediately() func(*ForgetConfig) {
-	return func(c *ForgetConfig) { c.Immediate = true }
+// forgetConfig is set by ForgetOption.
+type forgetConfig struct {
+	// immediate deletes the subject's key material and erases its vault
+	// entry at once, whatever the protector's mode. Recover then fails.
+	immediate bool
 }
 
 // forget implements Protector.Forget and records what it found in ev.
-func (p *Protector) forget(ctx context.Context, subID string, cfg ForgetConfig, ev *AuditEvent) (err error) {
+func (p *Protector) forget(ctx context.Context, subID string, cfg forgetConfig, ev *AuditEvent) (err error) {
 
 	defer func() {
 		if err != nil {
@@ -497,7 +495,7 @@ func (p *Protector) forget(ctx context.Context, subID string, cfg ForgetConfig, 
 		return
 	}
 
-	graceful := p.cfg.GracefulMode && !cfg.Immediate
+	graceful := p.cfg.GracefulMode && !cfg.immediate
 	ev.Immediate = !graceful
 
 	var keyErr error
@@ -807,7 +805,7 @@ func (p *Protector) Clear(ctx context.Context, force bool) (err error) {
 		}
 	}()
 
-	if cp, ok := p.cfg.KeyEngine.(core.KeyEngineCache); ok {
+	if cp, ok := p.cfg.KeyEngine.(keyengine.Cache); ok {
 		if e := cp.ClearCache(ctx, p.namespace, force); e != nil {
 			err = e
 		}

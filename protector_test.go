@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/ln80/privacy-engine/core"
+	"github.com/ln80/privacy-engine/internal/testdouble"
 	"github.com/ln80/privacy-engine/memory"
-	"github.com/ln80/privacy-engine/privacytest"
 	sensitive "github.com/ln80/struct-sensitive"
 )
 
@@ -158,11 +158,11 @@ func TestProtector_EncryptDecrypt(t *testing.T) {
 
 		t.Skip("skipping this test as atomicity support has been dropped by now.")
 
-		enc := &privacytest.UnstableEncryptorMock{
+		enc := &testdouble.UnstableEncryptorMock{
 			PointOfFailure: 2,
 		}
 
-		p := NewProtector(nspace, memory.NewKeyEngine(), func(pc *ProtectorConfig) {
+		p := NewProtector(nspace, memory.NewKeyEngine(), func(pc *protectorConfig) {
 			pc.Encryptor = enc
 		})
 
@@ -319,7 +319,7 @@ func TestProtector_EncryptDecrypt(t *testing.T) {
 		}
 
 		// forget subject for real, and assert we are unable to recover it
-		// p2 := NewProtector(nspace, func(pc *ProtectorConfig) {
+		// p2 := NewProtector(nspace, func(pc *protectorConfig) {
 		// 	pc.Engine = memory.NewKeyEngine()
 		// 	pc.GracefulMode = false
 		// })
@@ -341,7 +341,7 @@ func TestProtector_Purge(t *testing.T) {
 
 	keyEng := memory.NewKeyEngine()
 	tokenEng := memory.NewTokenEngine()
-	p := NewProtector(nspace, keyEng, func(pc *ProtectorConfig) {
+	p := NewProtector(nspace, keyEng, func(pc *protectorConfig) {
 		pc.TokenEngine = tokenEng
 		pc.GracefulMode = false
 	})
@@ -411,13 +411,13 @@ func TestProtector_MonitorDoesNotWipeKeys(t *testing.T) {
 	eng := struct{ core.KeyEngine }{origin}
 
 	f := NewFactory(func(namespace string) *Protector {
-		return NewProtector(namespace, eng, func(pc *ProtectorConfig) {
+		return NewProtector(namespace, eng, func(pc *protectorConfig) {
 			pc.CacheEnabled = true
 			pc.CacheTTL = time.Millisecond
 		})
-	}, func(fc *FactoryConfig) {
-		fc.IDLE = time.Hour
-		fc.MonitorPeriod = 2 * time.Millisecond
+	}, func(fc *factoryConfig) {
+		fc.idleTimeout = time.Hour
+		fc.monitorPeriod = 2 * time.Millisecond
 	})
 
 	p, _ := f.Instance("tenant-pe01")

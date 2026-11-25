@@ -72,7 +72,7 @@ func (p *Protector) vaultKeysFor(ctx context.Context, create bool) (vk vaultKeys
 // namespace has never seen (or whose token was forgotten). The vault stores
 // each value sealed and looked up through a keyed blind index: never in
 // clear (token vault v2, see vault.go).
-func (p *Protector) Tokenize(ctx context.Context, values []core.TokenData, opts ...func(*core.TokenizeConfig)) (result core.ValueTokenMap, err error) {
+func (p *Protector) Tokenize(ctx context.Context, values []core.TokenData, opts ...TokenizeOption) (result core.ValueTokenMap, err error) {
 	defer func() {
 		if err != nil {
 			result = nil
@@ -83,16 +83,13 @@ func (p *Protector) Tokenize(ctx context.Context, values []core.TokenData, opts 
 		return nil, core.ErrTokenEngineNotConfigured
 	}
 
-	cfg := core.TokenizeConfig{TokenGenFunc: core.DefaultTokenGen}
+	cfg := tokenizeConfig{generate: newUUIDToken}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(&cfg)
 		}
 	}
-	if cfg.TokenGenFunc == nil {
-		return nil, core.ErrTokenGenFuncNotFound
-	}
-	if isReservedID(cfg.Prefix) {
+	if isReservedID(cfg.prefix) {
 		return nil, ErrReservedSubjectID
 	}
 
@@ -136,13 +133,13 @@ func (p *Protector) Tokenize(ctx context.Context, values []core.TokenData, opts 
 // insertToken creates the vault record of a value the namespace has no token
 // for. A generated token that already exists is replaced; if another
 // Tokenize of the same value won the race, its token is returned.
-func (p *Protector) insertToken(ctx context.Context, vk vaultKeys, cfg core.TokenizeConfig, value core.TokenData, index []byte) (string, error) {
+func (p *Protector) insertToken(ctx context.Context, vk vaultKeys, cfg tokenizeConfig, value core.TokenData, index []byte) (string, error) {
 	for range maxTokenAttempts {
-		gen, err := cfg.TokenGenFunc(ctx, p.namespace)
+		gen, err := cfg.generate(ctx, p.namespace)
 		if err != nil {
 			return "", err
 		}
-		tok := cfg.Prefix + gen
+		tok := cfg.prefix + gen
 		if tok == "" || isReservedID(tok) {
 			return "", fmt.Errorf("%w: generated token %q", ErrReservedSubjectID, tok)
 		}

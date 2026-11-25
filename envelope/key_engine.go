@@ -101,7 +101,7 @@ func (e *KeyEngine) GetOrCreateKeys(ctx context.Context, namespace string, keyID
 // unwrap returns the data keys of blobs. own, when set, may supply a key
 // without a call to the wrapper. On error every key returned so far is zeroed.
 func (e *KeyEngine) unwrap(ctx context.Context, namespace string, blobs core.KeyMap, own func(string, []byte) core.Key) (core.KeyMap, error) {
-	keys := core.NewKeyMap()
+	keys := core.KeyMap{}
 	for keyID, blob := range blobs {
 		if own != nil {
 			if k := own(keyID, blob); k != nil {
@@ -118,7 +118,7 @@ func (e *KeyEngine) unwrap(ctx context.Context, namespace string, blobs core.Key
 			for _, k := range keys {
 				core.ZeroKey(k)
 			}
-			return nil, fmt.Errorf("%w: %w", core.ErrGetKeyFailure, err)
+			return nil, fmt.Errorf("unwrap key: %w", err)
 		}
 		keys[keyID] = k
 	}

@@ -1,6 +1,11 @@
 package privacy
 
-import "github.com/ln80/privacy-engine/core"
+import (
+	"context"
+
+	"github.com/google/uuid"
+	"github.com/ln80/privacy-engine/core"
+)
 
 // TokenDataSlice returns the given values as a `core.TokenData` slice.
 //
@@ -13,8 +18,13 @@ func TokenDataSlice(values ...string) []core.TokenData {
 	return tokenValues
 }
 
-func WithPrefix(prefix string) func(*core.TokenizeConfig) {
-	return func(tc *core.TokenizeConfig) {
-		tc.Prefix = prefix
-	}
+// tokenizeConfig is set by TokenizeOption.
+type tokenizeConfig struct {
+	prefix   string
+	generate func(ctx context.Context, namespace string) (string, error)
+}
+
+// newUUIDToken generates a random UUID (v4) token.
+func newUUIDToken(context.Context, string) (string, error) {
+	return uuid.New().String(), nil
 }

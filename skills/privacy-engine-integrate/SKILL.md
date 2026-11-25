@@ -2,10 +2,10 @@
 name: privacy-engine-integrate
 description: Add the Go library github.com/ln80/privacy-engine to a Go service to protect personal data. Covers field-level encryption of struct fields with one key per data subject, crypto-shredding for erasure requests (GDPR Art. 17, right to be forgotten), tokenization of identifiers such as emails, and audit events. Use when asked to encrypt PII or personal data in Go structs, events or records, make data erasable or forgettable in immutable stores (event logs, audit trails, backups), add crypto-shredding, pseudonymize or tokenize identifiers, or wire erasure and re-identification auditing in a Go codebase.
 license: Apache-2.0
-compatibility: Requires Go 1.25 or later. Uses github.com/ln80/privacy-engine v0.12.0 or later.
+compatibility: Requires Go 1.25 or later. Uses github.com/ln80/privacy-engine v0.13.0 or later.
 metadata:
   author: ln80
-  version: "0.12"
+  version: "0.13"
 ---
 
 # Integrate privacy-engine into a Go service

@@ -116,7 +116,7 @@ npx skills add ln80/privacy-engine
 
 Options: `--skill privacy-engine-backend` installs one skill, `-a claude-code`
 targets one agent, and `-g` installs for your user instead of the project.
-Pin a release with `ln80/privacy-engine@v0.12.0`.
+Pin a release with `ln80/privacy-engine@v0.13.0`.
 
 In Claude Code, install them as a plugin instead:
 

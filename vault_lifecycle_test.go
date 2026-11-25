@@ -27,7 +27,7 @@ type lifecycle struct {
 func newLifecycle(t *testing.T, graceful bool) *lifecycle {
 	keys, tokens := memory.NewKeyEngine(), memory.NewTokenEngine()
 	return &lifecycle{t: t, ctx: context.Background(), keys: keys, tokens: tokens,
-		p: NewProtector("tnt-life", keys, func(pc *ProtectorConfig) {
+		p: NewProtector("tnt-life", keys, func(pc *protectorConfig) {
 			pc.TokenEngine = tokens
 			pc.CacheEnabled = false
 			pc.GracefulMode = graceful

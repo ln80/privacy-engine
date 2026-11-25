@@ -23,7 +23,7 @@ type Encrypter interface {
 
 // Shredder erases and recovers subjects, and deletes tokens and namespaces.
 type Shredder interface {
-	Forget(ctx context.Context, subID string, opts ...func(*ForgetConfig)) error
+	Forget(ctx context.Context, subID string, opts ...ForgetOption) error
 	Recover(ctx context.Context, subID string) error
 	DeleteToken(ctx context.Context, token string) error
 	Purge(ctx context.Context) error
@@ -31,7 +31,7 @@ type Shredder interface {
 
 // Tokenizer replaces values with pseudonymous tokens. It cannot reveal them.
 type Tokenizer interface {
-	Tokenize(ctx context.Context, values []core.TokenData, opts ...func(*core.TokenizeConfig)) (core.ValueTokenMap, error)
+	Tokenize(ctx context.Context, values []core.TokenData, opts ...TokenizeOption) (core.ValueTokenMap, error)
 }
 
 // Reidentifier reveals the values behind tokens. Every call is audited when

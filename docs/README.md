@@ -13,6 +13,7 @@ These files ship with the module, at
 | [wire-format.md](wire-format.md) | Encrypted value and stream formats, versioning |
 | [token-vault.md](token-vault.md) | Tokenization design |
 | [audit-events.md](audit-events.md) | Audit events |
+| [api-stability.md](api-stability.md) | What the Go API promises across releases |
 
 Requirement IDs (`R-KE-3`) are stable and cited by the conformance tests.
 Normative documents state what code must do: a mismatch is a bug.

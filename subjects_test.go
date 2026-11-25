@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/ln80/privacy-engine/memory"
-	sensitive "github.com/ln80/struct-sensitive"
 )
 
 type subjAuthor struct {
@@ -41,22 +40,22 @@ func TestEncrypt_SingleSubjectByDefault(t *testing.T) {
 	p := NewProtector("ns", memory.NewKeyEngine())
 
 	rec := newSubjRecord()
-	if err := p.Encrypt(ctx, rec); !errors.Is(err, sensitive.ErrMultipleSubjectID) {
-		t.Fatalf("Encrypt() err = %v, want ErrMultipleSubjectID", err)
+	if err := p.Encrypt(ctx, rec); !errors.Is(err, ErrMultipleSubjects) {
+		t.Fatalf("Encrypt() err = %v, want ErrMultipleSubjects", err)
 	}
 	if rec.Payload != "body" || rec.Email != "a@b.c" {
 		t.Fatal("a refused Encrypt changed the record")
 	}
 
 	group := &subjGroup{Members: []subjMember{{ID: "u1", Email: "a@x"}, {ID: "u2", Email: "b@x"}}}
-	if err := p.Encrypt(ctx, group); !errors.Is(err, sensitive.ErrMultipleSubjectID) {
-		t.Fatalf("Encrypt(group) err = %v, want ErrMultipleSubjectID", err)
+	if err := p.Encrypt(ctx, group); !errors.Is(err, ErrMultipleSubjects) {
+		t.Fatalf("Encrypt(group) err = %v, want ErrMultipleSubjects", err)
 	}
 }
 
 func TestEncrypt_MultipleSubjects(t *testing.T) {
 	ctx := context.Background()
-	p := NewProtector("ns", memory.NewKeyEngine(), func(pc *ProtectorConfig) {
+	p := NewProtector("ns", memory.NewKeyEngine(), func(pc *protectorConfig) {
 		pc.MultipleSubjects = true
 	})
 

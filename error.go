@@ -6,8 +6,7 @@ import "errors"
 // Its base error contains more technical details,
 // and it can be enriched with meta-data, e.g., namespace and subject.
 type Error struct {
-	// Err is the base err
-	Err                     error
+	base                    error
 	msg, namespace, subject string
 }
 
@@ -28,7 +27,7 @@ func (e Error) Message() string {
 // looking through the whole wrapped chain.
 func (e Error) Subject() string {
 	if e.subject == "" {
-		if inner, ok := innerError(e.Err); ok {
+		if inner, ok := innerError(e.base); ok {
 			return inner.Subject()
 		}
 	}
@@ -39,7 +38,7 @@ func (e Error) Subject() string {
 // looking through the whole wrapped chain.
 func (e Error) Namespace() string {
 	if e.namespace == "" {
-		if inner, ok := innerError(e.Err); ok {
+		if inner, ok := innerError(e.base); ok {
 			return inner.Namespace()
 		}
 	}
@@ -67,7 +66,7 @@ func (e Error) withSubject(sub string) Error {
 }
 
 func (e Error) withBase(err error) Error {
-	e.Err = err
+	e.base = err
 	return e
 }
 
@@ -77,19 +76,22 @@ func (e Error) withBase(err error) Error {
 func (e Error) Error() string {
 	str := e.msg
 
-	if e.Err != nil {
-		str += ": " + e.Err.Error()
+	if e.base != nil {
+		str += ": " + e.base.Error()
 	}
 
 	return str
 }
 
+// Unwrap returns the cause: an engine, encryptor or auditor error, or
+// another Error.
 func (e Error) Unwrap() error {
-	return e.Err
+	return e.base
 }
 
-// Is compares only messages of Errors to decide whether they are equal.
-// Otherwise, the wrapped error will decide.
+// Is reports whether err is the sentinel e was built from: two Errors match
+// when their messages do, whatever their causes, namespaces and subjects. So
+// errors.Is(err, ErrSubjectForgotten) holds for every error built from it.
 func (e Error) Is(err error) bool {
 	if perr, ok := err.(Error); ok {
 		return e.msg == perr.msg

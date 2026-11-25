@@ -11,14 +11,14 @@ import (
 
 // Redaction of secrets and personal data.
 //
-// Key, IDKey and TokenData must never print their value by accident: not in
+// Key and TokenData must never print their value by accident: not in
 // fmt with any verb (%v %+v %#v %s %q %x %d ...), not in log/slog, not in
 // encoding/json or any encoder that uses encoding.TextMarshaler (including map
 // keys, except string-kind map keys: see ValueTokenMap.MarshalJSON). Each
 // prints a fixed placeholder instead. Marshaling redacts rather
 // than fails, so a log line holding one of these values still renders.
 //
-// Getting the real value is always explicit: []byte(key), IDKey.Key(),
+// Getting the real value is always explicit: []byte(key),
 // TokenData.Reveal(). Persisting a value through JSON stores the placeholder,
 // so never serialize these types to storage.
 const (
@@ -56,30 +56,6 @@ func (k Key) MarshalText() ([]byte, error) { return []byte(keyPlaceholder), nil 
 
 // MarshalJSON implements json.Marshaler.
 func (k Key) MarshalJSON() ([]byte, error) { return []byte(strconv.Quote(keyPlaceholder)), nil }
-
-// String implements fmt.Stringer. fmt never calls methods on unexported
-// fields, so IDKey redacts as a whole rather than relying on Key's methods.
-func (ik IDKey) String() string { return "{" + ik.id + " " + keyPlaceholder + "}" }
-
-// GoString implements fmt.GoStringer.
-func (ik IDKey) GoString() string {
-	return "core.IDKey{id:" + strconv.Quote(ik.id) + ", key:" + strconv.Quote(keyPlaceholder) + "}"
-}
-
-// Format implements fmt.Formatter.
-func (ik IDKey) Format(f fmt.State, verb rune) {
-	formatPlaceholder(f, verb, ik.String(), ik.GoString())
-}
-
-// LogValue implements slog.LogValuer.
-func (ik IDKey) LogValue() slog.Value {
-	return slog.GroupValue(slog.String("id", ik.id), slog.String("key", keyPlaceholder))
-}
-
-// MarshalJSON implements json.Marshaler.
-func (ik IDKey) MarshalJSON() ([]byte, error) {
-	return []byte(`{"id":` + strconv.Quote(ik.id) + `,"key":` + strconv.Quote(keyPlaceholder) + `}`), nil
-}
 
 // String implements fmt.Stringer.
 func (t TokenData) String() string { return tokenDataPlaceholder }

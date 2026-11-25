@@ -13,7 +13,7 @@ import (
 )
 
 func newVaultProtector(ns string, keys core.KeyEngine, tokens core.TokenEngine) *Protector {
-	return NewProtector(ns, keys, func(pc *ProtectorConfig) {
+	return NewProtector(ns, keys, func(pc *protectorConfig) {
 		pc.TokenEngine = tokens
 		pc.CacheEnabled = false
 	})
@@ -132,13 +132,11 @@ func TestVault_TokenCollisionIsRetried(t *testing.T) {
 	p := newVaultProtector("tnt-collide", memory.NewKeyEngine(), memory.NewTokenEngine())
 	seq := []string{"same", "same", "fresh"}
 	i := 0
-	gen := func(c *core.TokenizeConfig) {
-		c.TokenGenFunc = func(context.Context, string) (string, error) {
-			tok := seq[i]
-			i++
-			return tok, nil
-		}
-	}
+	gen := WithTokenGenerator(func(context.Context, string) (string, error) {
+		tok := seq[i]
+		i++
+		return tok, nil
+	})
 	a, err := p.Tokenize(ctx, TokenDataSlice("a@example.org"), gen)
 	if err != nil {
 		t.Fatal(err)
@@ -196,9 +194,8 @@ func TestVault_ConfigErrors(t *testing.T) {
 	if _, err := p.Tokenize(ctx, TokenDataSlice("x"), WithPrefix("@x")); !errors.Is(err, ErrReservedSubjectID) {
 		t.Fatalf("reserved prefix: expect ErrReservedSubjectID, got %v", err)
 	}
-	noGen := func(c *core.TokenizeConfig) { c.TokenGenFunc = nil }
-	if _, err := p.Tokenize(ctx, TokenDataSlice("x"), noGen); !errors.Is(err, core.ErrTokenGenFuncNotFound) {
-		t.Fatalf("nil generator: expect ErrTokenGenFuncNotFound, got %v", err)
+	if _, err := p.Tokenize(ctx, TokenDataSlice("x"), WithTokenGenerator(nil)); err != nil {
+		t.Fatalf("nil generator: expect the default generator, got %v", err)
 	}
 	if _, err := NewProtector("tnt-cfg", memory.NewKeyEngine()).Tokenize(ctx, TokenDataSlice("x")); !errors.Is(err, core.ErrTokenEngineNotConfigured) {
 		t.Fatalf("no engine: expect ErrTokenEngineNotConfigured, got %v", err)

@@ -8,5 +8,5 @@ import (
 )
 
 func TestEncryptorConformance(t *testing.T) {
-	privacytest.TestEncryptor(t, aes.New256GCMEncryptor())
+	privacytest.TestEncryptor(t, aes.NewEncryptor())
 }

@@ -7,16 +7,10 @@ import (
 	"time"
 )
 
-// Errors returned by KeyEngine implementations
-var (
-	ErrPersistKeyFailure  = errors.New("failed to persist encryption key(s)")
-	ErrGetKeyFailure      = errors.New("failed to get encryption key(s)")
-	ErrReEnableKeyFailure = errors.New("failed to renable encryption key(s)")
-	ErrDisableKeyFailure  = errors.New("failed to disable encryption key")
-	ErrDeleteKeyFailure   = errors.New("failed to delete encryption key")
-	ErrPurgeKeyFailure    = errors.New("failed to purge encryption keys")
-	ErrKeyNotFound        = errors.New("encryption key not found")
-)
+// ErrKeyNotFound is returned by KeyEngine.DisableKey and ReEnableKey for a
+// key ID the engine never saw or a deleted key. The Protector wraps it when
+// Forget finds nothing to erase.
+var ErrKeyNotFound = errors.New("encryption key not found")
 
 // Encryption key lifecycle states.
 const (
@@ -51,41 +45,6 @@ type KeyStates map[string]KeyState
 
 // KeyMap presents a map of Keys indexed by keyID.
 type KeyMap map[string]Key
-
-// NewKeyMap returns a new empty KeyMap.
-func NewKeyMap() KeyMap {
-	return make(map[string]Key)
-}
-
-// KeyIDs returns Key IDs.
-func (km KeyMap) KeyIDs() []string {
-	subIDs := []string{}
-	for subID := range km {
-		subIDs = append(subIDs, subID)
-	}
-	return subIDs
-}
-
-// IDKey presents a pair to combine a Key and its ID.
-type IDKey struct {
-	id  string
-	key Key
-}
-
-// NewIDKey returns new IdKey value of the given Key and ID.
-func NewIDKey(id string, key []byte) IDKey {
-	return IDKey{
-		id, Key(key),
-	}
-}
-
-func (ik IDKey) ID() string {
-	return ik.id
-}
-
-func (ik IDKey) Key() Key {
-	return ik.key
-}
 
 // KeyGen presents a function used by Key engines to generate keys
 type KeyGen func(ctx context.Context, namespace, keyID string) ([]byte, error)
@@ -165,15 +124,6 @@ type KeyEngineWrapper interface {
 
 	// Origin returns the wrapped Key engine.
 	Origin() KeyEngine
-}
-
-// KeyEngineCache is a KetEngine wrapper used for cache purpose.
-type KeyEngineCache interface {
-	KeyEngineWrapper
-
-	// ClearCache invalidates the cache of encryption keys based on a time-to-live configuration.
-	// 'force' parameter allows to bypass the TTL check and immediately invalidates the cache.
-	ClearCache(ctx context.Context, namespace string, force bool) error
 }
 
 // GracePeriodReporter is implemented by key and token engines that erase what

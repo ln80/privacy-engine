@@ -5,8 +5,11 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"maps"
 	"slices"
 	"time"
+
+	"github.com/ln80/privacy-engine/core"
 )
 
 func keysEqual[T cmp.Ordered](x, y []T) bool {
@@ -42,4 +45,9 @@ func randomKeyGen(context.Context, string, string) ([]byte, error) {
 // and slow storage.
 func margin(d time.Duration) time.Duration {
 	return max(d/5, 50*time.Millisecond)
+}
+
+// keyIDs returns the IDs of keys, sorted.
+func keyIDs(keys core.KeyMap) []string {
+	return slices.Sorted(maps.Keys(keys))
 }

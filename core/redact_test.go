@@ -40,7 +40,6 @@ func TestRedactFmt(t *testing.T) {
 	values := map[string]any{
 		"Key":         secretKey,
 		"*Key":        &secretKey,
-		"IDKey":       NewIDKey("u1", secretKey),
 		"KeyMap":      KeyMap{"u1": secretKey},
 		"TokenData":   secretData,
 		"TokenRecord": TokenRecord{Token: "t1", Value: secretData},
@@ -67,7 +66,6 @@ func TestRedactFmt(t *testing.T) {
 func TestRedactJSON(t *testing.T) {
 	values := map[string]any{
 		"Key":           secretKey,
-		"IDKey":         NewIDKey("u1", secretKey),
 		"KeyMap":        KeyMap{"u1": secretKey},
 		"TokenData":     secretData,
 		"TokenRecord":   TokenRecord{Token: "t1", Value: secretData},
@@ -99,7 +97,6 @@ func TestRedactSlog(t *testing.T) {
 		var buf bytes.Buffer
 		slog.New(newHandler(&buf)).Info("event",
 			"key", secretKey,
-			"idkey", NewIDKey("u1", secretKey),
 			"keys", KeyMap{"u1": secretKey},
 			"data", secretData,
 			"record", TokenRecord{Token: "t1", Value: secretData},
@@ -119,9 +116,6 @@ func TestRedactKeepsExplicitAccess(t *testing.T) {
 	}
 	if !bytes.Equal([]byte(secretKey), bytes.Repeat([]byte{0xAB}, 32)) {
 		t.Fatal("[]byte(key) must return the bytes")
-	}
-	if !bytes.Equal(NewIDKey("u1", secretKey).Key(), secretKey) {
-		t.Fatal("IDKey.Key must return the key")
 	}
 	if got := fmt.Sprintf("%q", secretData); got != `"**TOKEN DATA**"` {
 		t.Fatalf("%%q: got %s", got)

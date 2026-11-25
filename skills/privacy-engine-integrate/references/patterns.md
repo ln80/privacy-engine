@@ -11,6 +11,10 @@
 | `WithMultipleSubjects()` | off | A struct embeds another subject's data, each field under its nearest subject |
 | `WithForgottenValue(v)` | `""` | Placeholder for forgotten fields without `replace=` |
 
+Per call: `Forget(ctx, id, privacy.Immediately())`; `Tokenize(ctx, values,
+privacy.WithPrefix("cus_"), privacy.WithTokenGenerator(gen))`. Options are
+the only way to configure: the config structs are not exported.
+
 ## Repository decorator
 
 Encrypt and decrypt at the storage boundary, so domain code handles
@@ -52,6 +56,7 @@ once. Several structs in one call: `p.Encrypt(ctx, &e1, &e2)`.
 | `privacy.ErrKeyUnknown` | A value names a subject unknown in this namespace | Wrong tenant or store, or a purge: investigate, do not ignore |
 | `privacy.ErrValueNotAuthentic`, `core.ErrDecryptionFailure` | A value was altered or copied across tenants | Treat as tampering: alert |
 | `privacy.ErrAuditFailure` | The audit sink failed | Erasure: applied, retry the call. Reveal: nothing was returned |
+| `privacy.ErrMultipleSubjects` | `Encrypt` found several subjects in one struct | A bug in the tags; or use `WithMultipleSubjects()` if intended |
 | `core.ErrKeyNotFound` (from `Forget`, `Recover`) | The ID has no key and no vault entry: unknown, or already erased | `Forget`: nothing to erase; report not found or treat as done |
 
 Errors name field paths, never values. `privacy.Error.Subject()` and

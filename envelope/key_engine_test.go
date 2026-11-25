@@ -9,6 +9,7 @@ import (
 
 	"github.com/ln80/privacy-engine/core"
 	"github.com/ln80/privacy-engine/envelope"
+	"github.com/ln80/privacy-engine/internal/keyengine"
 	"github.com/ln80/privacy-engine/memory"
 	"github.com/ln80/privacy-engine/privacytest"
 )
@@ -24,7 +25,7 @@ func TestKeyEngineConformance(t *testing.T) {
 		})
 	})
 	t.Run("cache over envelope over store", func(t *testing.T) {
-		privacytest.TestKeyEngine(t, memory.NewCacheWrapper(newEngine(), time.Minute), func(c *privacytest.KeyEngineTestConfig) {
+		privacytest.TestKeyEngine(t, keyengine.NewCache(newEngine(), time.Minute), func(c *privacytest.KeyEngineTestConfig) {
 			c.GracePeriod = grace
 		})
 	})
@@ -56,7 +57,7 @@ type losingStore struct {
 }
 
 func (s *losingStore) GetOrCreateKeys(ctx context.Context, ns string, keyIDs []string, keyGen core.KeyGen) (core.KeyMap, error) {
-	keys := core.NewKeyMap()
+	keys := core.KeyMap{}
 	for _, id := range keyIDs {
 		if _, err := keyGen(ctx, ns, id); err != nil {
 			return nil, err
@@ -115,10 +116,11 @@ func TestKeyEngineRefusesBadWrappers(t *testing.T) {
 	if _, err := envelope.NewKeyEngine(badWrapper{size: 32}, store).GetOrCreateKeys(ctx, "ns", []string{"a", "b"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	failing := envelope.NewKeyEngine(badWrapper{unwrapErr: errors.New("kms down")}, store)
+	kmsDown := errors.New("kms down")
+	failing := envelope.NewKeyEngine(badWrapper{unwrapErr: kmsDown}, store)
 	keys, missing, err := failing.GetKeys(ctx, "ns", []string{"a", "b"})
-	if !errors.Is(err, core.ErrGetKeyFailure) || keys != nil || missing != nil {
-		t.Fatalf("expect core.ErrGetKeyFailure and no keys, got %v, %v, %v", keys, missing, err)
+	if !errors.Is(err, kmsDown) || keys != nil || missing != nil {
+		t.Fatalf("expect the wrapper's error and no keys, got %v, %v, %v", keys, missing, err)
 	}
 }
 

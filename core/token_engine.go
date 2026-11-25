@@ -4,19 +4,16 @@ import (
 	"context"
 	"errors"
 	"time"
-
-	"github.com/google/uuid"
 )
 
+// Errors of the TokenEngine contract (docs/implementing-backends.md).
 var (
-	ErrTokenNotFound            = errors.New("token not found")
-	ErrTokenErased              = errors.New("token is erased")
-	ErrTokenExists              = errors.New("token already exists")
-	ErrTokenGenFuncNotFound     = errors.New("token gen function is not found")
-	ErrDetokenizeFailure        = errors.New("failed to detokenize token(s)")
-	ErrTokenizeFailure          = errors.New("failed to tokenize value(s)")
-	ErrDeleteTokenFailure       = errors.New("failed to delete token")
-	ErrPurgeTokenFailure        = errors.New("failed to purge tokens")
+	ErrTokenNotFound = errors.New("token not found")
+	ErrTokenErased   = errors.New("token is erased")
+	ErrTokenExists   = errors.New("token already exists")
+
+	// ErrTokenEngineNotConfigured is returned, wrapped, by the Protector's
+	// token methods when it has no TokenEngine.
 	ErrTokenEngineNotConfigured = errors.New("token engine is not configured")
 )
 
@@ -56,14 +53,16 @@ const (
 	TokenErased TokenState = "ERASED"
 )
 
-// ValueTokenMap maps token data to tokens
+// ValueTokenMap is the result of Tokenize: each value, keyed by the value,
+// with its token. Read it with Get(value).
 type ValueTokenMap map[TokenData]TokenRecord
 
-// Get the token of the given value
+// Get returns the record of value: its token is Get(value).Token.
 func (m ValueTokenMap) Get(v string) TokenRecord {
 	return m[TokenData(v)]
 }
 
+// Tokens returns the tokens of the map, in no order.
 func (m ValueTokenMap) Tokens() []string {
 	tokens := []string{}
 	for _, r := range m {
@@ -72,14 +71,16 @@ func (m ValueTokenMap) Tokens() []string {
 	return tokens
 }
 
-// ValueTokenMap maps token to token data
+// TokenValueMap is the result of Detokenize: each token, keyed by the token,
+// with its value. Read it with Get(token).
 type TokenValueMap map[string]TokenRecord
 
-// Get the value of the given token
+// Get returns the record of token: its value is Get(token).Value.
 func (m TokenValueMap) Get(t string) TokenRecord {
 	return m[t]
 }
 
+// Values returns the values of the map, in no order.
 func (m TokenValueMap) Values() []TokenData {
 	values := []TokenData{}
 	for _, r := range m {
@@ -94,22 +95,6 @@ type TokenRecord struct {
 	Token string
 	Value TokenData
 	State TokenState
-}
-
-// TokenizeConfig configures one Tokenize call.
-type TokenizeConfig struct {
-	// Prefix is prepended to every new token, e.g. "sub_".
-	Prefix string
-
-	// TokenGenFunc generates the random part of a new token. It does not
-	// receive the value: a token must never be derived from it, as hashed
-	// emails can be reversed by brute force.
-	TokenGenFunc func(ctx context.Context, namespace string) (string, error)
-}
-
-// DefaultTokenGen generates a random UUID (v4) token.
-func DefaultTokenGen(ctx context.Context, namespace string) (string, error) {
-	return uuid.New().String(), nil
 }
 
 // VaultRecord is a token's entry as stored. Index and Sealed are opaque to
@@ -198,13 +183,15 @@ type ListTokensQuery struct {
 	Cursor *string
 }
 
-// ListRecordsResult is a page of stored records.
+// ListRecordsResult is a page of vault records, as TokenEngine.ListTokens
+// returns them: sealed, for the Protector to open.
 type ListRecordsResult struct {
 	Records []VaultRecord
 	Cursor  *string
 }
 
-// ListTokensResult is a page of tokens as the protector returns them.
+// ListTokensResult is a page of tokens as Protector.ListTokens returns them:
+// opened, with values for active tokens only.
 type ListTokensResult struct {
 	Tokens []TokenRecord
 	Cursor *string
