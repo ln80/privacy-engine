@@ -79,9 +79,9 @@ func TestFactory(t *testing.T) {
 	idle := 500 * time.Millisecond
 	period := 100 * time.Millisecond
 	within := 5 * time.Second // generous: only a broken monitor reaches it
-	f := NewFactory(builder, func(fc *FactoryConfig) {
-		fc.IDLE = idle
-		fc.MonitorPeriod = period
+	f := NewFactory(builder, func(fc *factoryConfig) {
+		fc.idleTimeout = idle
+		fc.monitorPeriod = period
 	})
 	fi := f
 

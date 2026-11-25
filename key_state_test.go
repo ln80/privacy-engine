@@ -13,8 +13,8 @@ import (
 // Step 5 of wire format v2: Encrypt keeps an existing value only when it
 // authenticates, and Decrypt acts on the key state.
 
-func newStateProtector(ns string, eng core.KeyEngine, opts ...func(*ProtectorConfig)) *Protector {
-	opts = append([]func(*ProtectorConfig){func(pc *ProtectorConfig) { pc.CacheEnabled = false }}, opts...)
+func newStateProtector(ns string, eng core.KeyEngine, opts ...ProtectorOption) *Protector {
+	opts = append([]ProtectorOption{func(pc *protectorConfig) { pc.CacheEnabled = false }}, opts...)
 	return NewProtector(ns, eng, opts...)
 }
 
@@ -59,12 +59,12 @@ func TestDecrypt_WrongNamespaceIsAnError(t *testing.T) {
 }
 
 // A forgotten subject (disabled or deleted key) yields the placeholder: the
-// tag's replace= option, else ProtectorConfig.ForgottenValue.
+// tag's replace= option, else protectorConfig.ForgottenValue.
 func TestDecrypt_ForgottenSubjectGetsPlaceholder(t *testing.T) {
 	ctx := context.Background()
 	for name, graceful := range map[string]bool{"disabled": true, "deleted": false} {
 		t.Run(name, func(t *testing.T) {
-			p := newStateProtector("tenant-forget", memory.NewKeyEngine(), func(pc *ProtectorConfig) {
+			p := newStateProtector("tenant-forget", memory.NewKeyEngine(), func(pc *protectorConfig) {
 				pc.GracefulMode = graceful
 				pc.ForgottenValue = "[forgotten]"
 			})
@@ -174,7 +174,7 @@ func TestEncrypt_Idempotent(t *testing.T) {
 // it is kept by Encrypt, decrypts with A's key, and is shredded by Forget(A).
 func TestCopiedValueFollowsItsOwnSubject(t *testing.T) {
 	ctx := context.Background()
-	p := newStateProtector("tenant-copy", memory.NewKeyEngine(), func(pc *ProtectorConfig) {
+	p := newStateProtector("tenant-copy", memory.NewKeyEngine(), func(pc *protectorConfig) {
 		pc.ForgottenValue = "[forgotten]"
 	})
 	alice := encryptedProfile(t, p, "alice")

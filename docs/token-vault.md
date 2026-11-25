@@ -18,7 +18,7 @@ under it.
    computes its lookup key.
 2. Lookups by key only: a value by its blind index, a token by its ID.
 3. One live token per value, enforced by the store's conditional insert.
-4. Tokens are random: `TokenGenFunc` never receives the value.
+4. Tokens are random: a `WithTokenGenerator` function never receives the value.
 5. Erasure follows the key lifecycle.
 
 ## 2. Cryptography

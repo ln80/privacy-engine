@@ -30,7 +30,7 @@ func (brokenTokenStore) ListTokens(context.Context, string, core.ListTokensQuery
 // their category, with the namespace, wrapping the cause, on one line.
 func TestTokenMethodErrors(t *testing.T) {
 	ctx := context.Background()
-	broken := NewProtector("tenant-e", memory.NewKeyEngine(), func(pc *ProtectorConfig) {
+	broken := NewProtector("tenant-e", memory.NewKeyEngine(), func(pc *protectorConfig) {
 		pc.TokenEngine = brokenTokenStore{memory.NewTokenEngine()}
 	})
 	none := NewProtector("tenant-e", memory.NewKeyEngine())

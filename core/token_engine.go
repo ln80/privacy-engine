@@ -4,15 +4,12 @@ import (
 	"context"
 	"errors"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 var (
 	ErrTokenNotFound            = errors.New("token not found")
 	ErrTokenErased              = errors.New("token is erased")
 	ErrTokenExists              = errors.New("token already exists")
-	ErrTokenGenFuncNotFound     = errors.New("token gen function is not found")
 	ErrDetokenizeFailure        = errors.New("failed to detokenize token(s)")
 	ErrTokenizeFailure          = errors.New("failed to tokenize value(s)")
 	ErrDeleteTokenFailure       = errors.New("failed to delete token")
@@ -94,22 +91,6 @@ type TokenRecord struct {
 	Token string
 	Value TokenData
 	State TokenState
-}
-
-// TokenizeConfig configures one Tokenize call.
-type TokenizeConfig struct {
-	// Prefix is prepended to every new token, e.g. "sub_".
-	Prefix string
-
-	// TokenGenFunc generates the random part of a new token. It does not
-	// receive the value: a token must never be derived from it, as hashed
-	// emails can be reversed by brute force.
-	TokenGenFunc func(ctx context.Context, namespace string) (string, error)
-}
-
-// DefaultTokenGen generates a random UUID (v4) token.
-func DefaultTokenGen(ctx context.Context, namespace string) (string, error) {
-	return uuid.New().String(), nil
 }
 
 // VaultRecord is a token's entry as stored. Index and Sealed are opaque to

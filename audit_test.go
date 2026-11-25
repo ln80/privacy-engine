@@ -35,7 +35,7 @@ func newAuditProtector(t *testing.T, graceful bool) (*Protector, *recordingAudit
 	t.Helper()
 	a := &recordingAuditor{}
 	eng := memory.NewKeyEngine(func(c *core.KeyEngineConfig) { c.GracePeriod = auditGrace })
-	p := NewProtector("tenant-audit", eng, func(pc *ProtectorConfig) {
+	p := NewProtector("tenant-audit", eng, func(pc *protectorConfig) {
 		pc.TokenEngine = memory.NewTokenEngine()
 		pc.GracefulMode = graceful
 		pc.Auditor = a

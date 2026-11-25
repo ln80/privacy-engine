@@ -40,9 +40,7 @@ func TestTokenize_GeneratorFailures(t *testing.T) {
 	ctx := t.Context()
 	p := NewProtector("ns", memory.NewKeyEngine(), WithTokenEngine(memory.NewTokenEngine()))
 
-	constant := func(c *core.TokenizeConfig) {
-		c.TokenGenFunc = func(context.Context, string) (string, error) { return "same", nil }
-	}
+	constant := WithTokenGenerator(func(context.Context, string) (string, error) { return "same", nil })
 	if _, err := p.Tokenize(ctx, TokenDataSlice("a@example.com"), constant); err != nil {
 		t.Fatal(err)
 	}
@@ -58,9 +56,7 @@ func TestTokenize_GeneratorFailures(t *testing.T) {
 	}
 
 	boom := errors.New("no entropy")
-	_, err = p.Tokenize(ctx, TokenDataSlice("c@example.com"), func(c *core.TokenizeConfig) {
-		c.TokenGenFunc = func(context.Context, string) (string, error) { return "", boom }
-	})
+	_, err = p.Tokenize(ctx, TokenDataSlice("c@example.com"), WithTokenGenerator(func(context.Context, string) (string, error) { return "", boom }))
 	if !errors.Is(err, ErrTokenizeFailure) || !errors.Is(err, boom) {
 		t.Fatalf("generator error: expect ErrTokenizeFailure wrapping it, got %v", err)
 	}

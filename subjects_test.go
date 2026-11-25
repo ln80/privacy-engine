@@ -56,7 +56,7 @@ func TestEncrypt_SingleSubjectByDefault(t *testing.T) {
 
 func TestEncrypt_MultipleSubjects(t *testing.T) {
 	ctx := context.Background()
-	p := NewProtector("ns", memory.NewKeyEngine(), func(pc *ProtectorConfig) {
+	p := NewProtector("ns", memory.NewKeyEngine(), func(pc *protectorConfig) {
 		pc.MultipleSubjects = true
 	})
 

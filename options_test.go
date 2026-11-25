@@ -10,7 +10,7 @@ import (
 	"github.com/ln80/privacy-engine/memory"
 )
 
-func configOf(p *Protector) *ProtectorConfig { return p.cfg }
+func configOf(p *Protector) *protectorConfig { return p.cfg }
 
 func TestProtectorOptions(t *testing.T) {
 	tokens := memory.NewTokenEngine()
@@ -51,7 +51,7 @@ func TestProtectorOptions(t *testing.T) {
 func TestProtectorClosuresStillWork(t *testing.T) {
 	c := configOf(NewProtector("ns", memory.NewKeyEngine(),
 		WithForgottenValue("x"),
-		func(pc *ProtectorConfig) { pc.GracefulMode = false },
+		func(pc *protectorConfig) { pc.GracefulMode = false },
 	))
 	if c.GracefulMode || c.ForgottenValue != "x" {
 		t.Fatalf("unexpected config %+v", c)
@@ -61,8 +61,8 @@ func TestProtectorClosuresStillWork(t *testing.T) {
 func TestFactoryOptions(t *testing.T) {
 	f := NewFactory(func(ns string) *Protector { return NewProtector(ns, memory.NewKeyEngine()) },
 		WithIdleTimeout(time.Hour), WithMonitorPeriod(time.Minute))
-	if f.IDLE != time.Hour || f.MonitorPeriod != time.Minute {
-		t.Fatalf("unexpected config %+v", f.FactoryConfig)
+	if f.idleTimeout != time.Hour || f.monitorPeriod != time.Minute {
+		t.Fatalf("unexpected config %+v", f.factoryConfig)
 	}
 }
 

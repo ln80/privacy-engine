@@ -13,14 +13,10 @@ type FactoryClearFunc func()
 // FactoryNewFunc is used by the Factory service to create Protector instance per namespace.
 type FactoryNewFunc func(namespace string) *Protector
 
-// FactoryConfig presents the configuration of Factory service
-type FactoryConfig struct {
-
-	// IDLE is the duration used to define whether a Protector service is inactive.
-	IDLE time.Duration
-
-	// MonitorPeriod is the frequency of the regular checks made by the monitoring process.
-	MonitorPeriod time.Duration
+// factoryConfig is set by FactoryOption.
+type factoryConfig struct {
+	idleTimeout   time.Duration
+	monitorPeriod time.Duration
 }
 
 type registryEntry struct {
@@ -35,7 +31,7 @@ type Factory struct {
 	mu           sync.RWMutex
 	reg          map[string]*registryEntry
 	newProtector FactoryNewFunc
-	*FactoryConfig
+	*factoryConfig
 }
 
 // NewFactory returns a thread-safe factory service instance.
@@ -49,9 +45,9 @@ func NewFactory(newProt FactoryNewFunc, opts ...FactoryOption) *Factory {
 	f := &Factory{
 		reg:          make(map[string]*registryEntry),
 		newProtector: newProt,
-		FactoryConfig: &FactoryConfig{
-			IDLE:          20 * time.Minute,
-			MonitorPeriod: 5 * time.Second,
+		factoryConfig: &factoryConfig{
+			idleTimeout:   20 * time.Minute,
+			monitorPeriod: 5 * time.Second,
 		},
 	}
 
@@ -59,7 +55,7 @@ func NewFactory(newProt FactoryNewFunc, opts ...FactoryOption) *Factory {
 		if opt == nil {
 			continue
 		}
-		opt(f.FactoryConfig)
+		opt(f.factoryConfig)
 	}
 
 	return f
@@ -100,7 +96,7 @@ func (f *Factory) clear(ctx context.Context, force bool) {
 	for nspace, entry := range f.reg {
 		_ = entry.protector.Clear(ctx, force)
 
-		if force || (!entry.lastUsedAt.IsZero() && entry.lastUsedAt.Add(f.IDLE).Before(time.Now())) {
+		if force || (!entry.lastUsedAt.IsZero() && entry.lastUsedAt.Add(f.idleTimeout).Before(time.Now())) {
 			delete(f.reg, nspace)
 		}
 	}
@@ -110,7 +106,7 @@ func (f *Factory) clear(ctx context.Context, force bool) {
 // entries and evicts Protectors idle longer than the idle timeout. When ctx
 // ends it clears every cache and stops. Call it once.
 func (f *Factory) Monitor(ctx context.Context) {
-	ticker := time.NewTicker(f.MonitorPeriod)
+	ticker := time.NewTicker(f.monitorPeriod)
 	go func() {
 		defer func() {
 			clearCtx, cancel := context.WithTimeout(context.Background(), time.Second)

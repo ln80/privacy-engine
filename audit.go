@@ -111,10 +111,10 @@ func (p *Protector) auditChange(ctx context.Context, ev AuditEvent, err error) e
 //
 // In graceful mode (the default) the key is disabled and the vault entry
 // hidden; both are erased once the grace period ends, and Recover works
-// until then. Immediately() erases both at once for this call, whatever
-// the protector's GracefulMode.
-func (p *Protector) Forget(ctx context.Context, subID string, opts ...func(*ForgetConfig)) error {
-	cfg := ForgetConfig{}
+// until then. Immediately() erases both at once for this call;
+// WithImmediateErasure does it for every call.
+func (p *Protector) Forget(ctx context.Context, subID string, opts ...ForgetOption) error {
+	cfg := forgetConfig{}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(&cfg)
