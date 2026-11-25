@@ -196,7 +196,7 @@ func (p *Protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) 
 	structs := make([]sensitive.Struct, 0)
 	subjectIDs := make([]string, 0)
 	for _, strPtr := range structPtrs {
-		piiStruct, err := sensitive.Scan(strPtr, true, sensitive.WithSubjectMode(mode))
+		piiStruct, err := sensitive.Scan(strPtr, sensitive.WithRequireSubject(), sensitive.WithSubjectMode(mode))
 		if err != nil {
 			return err
 		}
@@ -291,7 +291,7 @@ func (p *Protector) Decrypt(ctx context.Context, structPtrs ...any) (err error) 
 
 	structs := make([]sensitive.Struct, 0)
 	for _, strPtr := range structPtrs {
-		piiStruct, err := sensitive.Scan(strPtr, false)
+		piiStruct, err := sensitive.Scan(strPtr)
 		if err != nil {
 			return err
 		}
