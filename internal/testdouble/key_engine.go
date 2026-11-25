@@ -104,7 +104,7 @@ func cloneKeyMap(in core.KeyMap) core.KeyMap {
 	if in == nil {
 		return nil
 	}
-	out := core.NewKeyMap()
+	out := core.KeyMap{}
 	for id, k := range in {
 		out[id] = bytes.Clone(k)
 	}
@@ -142,7 +142,7 @@ func (e *KeyEngineMock) PurgeNamespace(ctx context.Context, namespace string) er
 	if err := e.DeleteKeyErr; err != nil {
 		return err
 	}
-	e.KeyList = core.NewKeyMap()
+	e.KeyList = core.KeyMap{}
 	return nil
 }
 

@@ -141,7 +141,7 @@ func NewProtector(namespace string, engine core.KeyEngine, opts ...ProtectorOpti
 	p := &Protector{
 		namespace: namespace,
 		cfg: &protectorConfig{
-			Encryptor:    aes.New256GCMEncryptor(),
+			Encryptor:    aes.NewEncryptor(),
 			KeyEngine:    engine,
 			CacheEnabled: true,
 			GracefulMode: true,

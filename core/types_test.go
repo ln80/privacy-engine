@@ -28,9 +28,6 @@ func TestRedactStringAndText(t *testing.T) {
 	if err != nil || leaks(string(out)) {
 		t.Fatalf("encoding/xml leaks a key: %s, %v", out, err)
 	}
-	if ik := NewIDKey("u1", secretKey); ik.ID() != "u1" || leaks(ik.String()) {
-		t.Fatal("IDKey: expect its ID and a redacted String")
-	}
 }
 
 type xmlHolder struct{ K Key }

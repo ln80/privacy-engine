@@ -46,41 +46,6 @@ type KeyStates map[string]KeyState
 // KeyMap presents a map of Keys indexed by keyID.
 type KeyMap map[string]Key
 
-// NewKeyMap returns a new empty KeyMap.
-func NewKeyMap() KeyMap {
-	return make(map[string]Key)
-}
-
-// KeyIDs returns Key IDs.
-func (km KeyMap) KeyIDs() []string {
-	subIDs := []string{}
-	for subID := range km {
-		subIDs = append(subIDs, subID)
-	}
-	return subIDs
-}
-
-// IDKey presents a pair to combine a Key and its ID.
-type IDKey struct {
-	id  string
-	key Key
-}
-
-// NewIDKey returns new IdKey value of the given Key and ID.
-func NewIDKey(id string, key []byte) IDKey {
-	return IDKey{
-		id, Key(key),
-	}
-}
-
-func (ik IDKey) ID() string {
-	return ik.id
-}
-
-func (ik IDKey) Key() Key {
-	return ik.key
-}
-
 // KeyGen presents a function used by Key engines to generate keys
 type KeyGen func(ctx context.Context, namespace, keyID string) ([]byte, error)
 

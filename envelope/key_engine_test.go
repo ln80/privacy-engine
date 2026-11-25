@@ -57,7 +57,7 @@ type losingStore struct {
 }
 
 func (s *losingStore) GetOrCreateKeys(ctx context.Context, ns string, keyIDs []string, keyGen core.KeyGen) (core.KeyMap, error) {
-	keys := core.NewKeyMap()
+	keys := core.KeyMap{}
 	for _, id := range keyIDs {
 		if _, err := keyGen(ctx, ns, id); err != nil {
 			return nil, err

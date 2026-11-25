@@ -192,7 +192,7 @@ func TestCacheWrapperReportsOriginStates(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, ok := keys["active"]; !ok || len(keys) != 1 {
-		t.Fatalf("expect only the active key, got %v", keys.KeyIDs())
+		t.Fatalf("expect only the active key, got %d keys", len(keys))
 	}
 	want := core.KeyStates{
 		"disabled": core.StateDisabled,
@@ -309,7 +309,7 @@ func TestCacheWrapperDoesNotServeExpiredKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	if keys["s"] != nil || missing["s"] != core.StateDisabled {
-		t.Fatalf("expect DISABLED after TTL, got keys=%v missing=%v", keys.KeyIDs(), missing)
+		t.Fatalf("expect DISABLED after TTL, got %d keys, missing=%v", len(keys), missing)
 	}
 }
 

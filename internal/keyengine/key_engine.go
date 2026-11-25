@@ -156,7 +156,7 @@ func (e *engine) cacheOf(namespace string) map[string]keyCache {
 func (e *engine) GetKeys(ctx context.Context, namespace string, keyIDs []string) (core.KeyMap, core.KeyStates, error) {
 	cache := e.cacheOf(namespace)
 
-	foundKeys := core.NewKeyMap()
+	foundKeys := core.KeyMap{}
 	missing := core.KeyStates{}
 	missedKeys := []string{}
 	now := time.Now()
@@ -216,7 +216,7 @@ func (e *engine) GetKeys(ctx context.Context, namespace string, keyIDs []string)
 // GetOrCreateKeys implements core.KeyEngine
 func (e *engine) GetOrCreateKeys(ctx context.Context, namespace string, keyIDs []string, keyGen core.KeyGen) (core.KeyMap, error) {
 	if keyGen == nil {
-		keyGen = aes.Key256GenFn
+		keyGen = aes.GenerateKey
 	}
 
 	cache := e.cacheOf(namespace)
@@ -230,7 +230,7 @@ func (e *engine) GetOrCreateKeys(ctx context.Context, namespace string, keyIDs [
 			if err != nil {
 				return nil, err
 			}
-			out := core.NewKeyMap()
+			out := core.KeyMap{}
 			for keyID, k := range keys {
 				owned := cloneKey(k)
 				putCachedKey(cache, keyID, owned)

@@ -24,7 +24,7 @@ func bind(ns string) core.Binding {
 
 func testKey(t testing.TB) core.Key {
 	t.Helper()
-	k, err := Key256GenFn(context.Background(), testNS, "subject-1")
+	k, err := GenerateKey(context.Background(), testNS, "subject-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestStreamRoundTrip(t *testing.T) {
 }
 
 func TestStreamDefaultSegmentThroughEncryptor(t *testing.T) {
-	enc := New256GCMEncryptor()
+	enc := NewEncryptor()
 	key := testKey(t)
 	plain := randBytes(t, 3*DefaultStreamSegmentSize+123)
 
@@ -255,7 +255,7 @@ func TestStreamPropagatesSourceError(t *testing.T) {
 
 // Regression: abandoned streams hold no goroutine.
 func TestStreamAbandonedLeaksNoGoroutine(t *testing.T) {
-	enc := New256GCMEncryptor()
+	enc := NewEncryptor()
 	key := testKey(t)
 	sealed := encryptWith(t, key, testNS, randBytes(t, 1024), 64)
 

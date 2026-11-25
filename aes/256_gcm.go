@@ -18,7 +18,9 @@ const aES265KeySize = 32
 // directly under the DEK, random 96-bit nonce, AAD from fieldAAD.
 const AlgAES256GCM uint8 = 0x01
 
-func Key256GenFn(ctx context.Context, namespace, subID string) ([]byte, error) {
+// GenerateKey returns a random 32-byte AES-256 key. It is a core.KeyGen: the
+// namespace and key ID are ignored, as a key is never derived from them.
+func GenerateKey(ctx context.Context, namespace, keyID string) ([]byte, error) {
 	return getRandomBytes(aES265KeySize)
 }
 
@@ -26,7 +28,9 @@ type aes256gcm struct{}
 
 var _ core.Encryptor = &aes256gcm{}
 
-func New256GCMEncryptor() core.Encryptor {
+// NewEncryptor returns the AES-256-GCM Encryptor (AlgAES256GCM), the
+// Protector's default.
+func NewEncryptor() core.Encryptor {
 	return &aes256gcm{}
 }
 
@@ -36,7 +40,7 @@ func (e *aes256gcm) Algorithm() uint8 {
 }
 
 func (e *aes256gcm) KeyGen() core.KeyGen {
-	return Key256GenFn
+	return GenerateKey
 }
 
 // validateAES256Key rejects keys crypto/aes would silently accept as AES-128 or AES-192,

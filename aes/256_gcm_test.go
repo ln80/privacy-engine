@@ -12,7 +12,7 @@ import (
 )
 
 func TestAES256RejectsBadKeys(t *testing.T) {
-	enc := New256GCMEncryptor()
+	enc := NewEncryptor()
 	namespace := "tenant-pe08"
 	keys := []struct {
 		name string
@@ -47,9 +47,9 @@ func TestAES256RejectsBadKeys(t *testing.T) {
 }
 
 func TestAES256RoundTrip(t *testing.T) {
-	enc := New256GCMEncryptor()
+	enc := NewEncryptor()
 	namespace := "tenant-pe08"
-	key, err := Key256GenFn(context.Background(), namespace, "subject-1")
+	key, err := GenerateKey(context.Background(), namespace, "subject-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestAES256RoundTrip(t *testing.T) {
 // Regression: a ciphertext shorter than nonce + tag returns an error
 // instead of panicking on the nonce slice.
 func TestAES256DecryptShortCiphertext(t *testing.T) {
-	enc := New256GCMEncryptor()
+	enc := NewEncryptor()
 	key := testKey(t)
 	for n := 0; n < 12+16; n++ {
 		_, err := enc.Decrypt(bind(testNS), key, make([]byte, n))
@@ -104,7 +104,7 @@ func TestAES256DecryptShortCiphertext(t *testing.T) {
 // FuzzDecrypt: arbitrary input never panics, and only the exact ciphertext
 // that was produced decrypts.
 func FuzzDecrypt(f *testing.F) {
-	enc := New256GCMEncryptor()
+	enc := NewEncryptor()
 	key := testKey(f)
 	const plain = "fuzz plaintext"
 	valid, err := enc.Encrypt(bind(testNS), key, []byte(plain))
@@ -125,7 +125,7 @@ func FuzzDecrypt(f *testing.F) {
 // The AAD binds the namespace, the key version and the algorithm: a value
 // decrypts only under the exact binding it was encrypted with.
 func TestAES256FieldBinding(t *testing.T) {
-	enc := New256GCMEncryptor()
+	enc := NewEncryptor()
 	key := testKey(t)
 	b := core.Binding{Namespace: testNS, KeyVersion: 1}
 	sealed, err := enc.Encrypt(b, key, []byte("payload"))

@@ -75,7 +75,7 @@ SELECT state, key, disabled_at FROM privacy_keys WHERE namespace = ? AND key_id 
   race: a key that was not stored encrypts data nobody can read again.
 - IDs whose effective state is `DISABLED` or `DELETED` are left out of the
   result, never recreated (R-KE-4).
-- `keyGen` may be nil: fall back to `aes.Key256GenFn`.
+- `keyGen` may be nil: fall back to `aes.GenerateKey`.
 
 ## DisableKey, ReEnableKey (R-KE-5)
 

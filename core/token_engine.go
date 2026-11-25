@@ -53,14 +53,16 @@ const (
 	TokenErased TokenState = "ERASED"
 )
 
-// ValueTokenMap maps token data to tokens
+// ValueTokenMap is the result of Tokenize: each value, keyed by the value,
+// with its token. Read it with Get(value).
 type ValueTokenMap map[TokenData]TokenRecord
 
-// Get the token of the given value
+// Get returns the record of value: its token is Get(value).Token.
 func (m ValueTokenMap) Get(v string) TokenRecord {
 	return m[TokenData(v)]
 }
 
+// Tokens returns the tokens of the map, in no order.
 func (m ValueTokenMap) Tokens() []string {
 	tokens := []string{}
 	for _, r := range m {
@@ -69,14 +71,16 @@ func (m ValueTokenMap) Tokens() []string {
 	return tokens
 }
 
-// ValueTokenMap maps token to token data
+// TokenValueMap is the result of Detokenize: each token, keyed by the token,
+// with its value. Read it with Get(token).
 type TokenValueMap map[string]TokenRecord
 
-// Get the value of the given token
+// Get returns the record of token: its value is Get(token).Value.
 func (m TokenValueMap) Get(t string) TokenRecord {
 	return m[t]
 }
 
+// Values returns the values of the map, in no order.
 func (m TokenValueMap) Values() []TokenData {
 	values := []TokenData{}
 	for _, r := range m {
@@ -179,13 +183,15 @@ type ListTokensQuery struct {
 	Cursor *string
 }
 
-// ListRecordsResult is a page of stored records.
+// ListRecordsResult is a page of vault records, as TokenEngine.ListTokens
+// returns them: sealed, for the Protector to open.
 type ListRecordsResult struct {
 	Records []VaultRecord
 	Cursor  *string
 }
 
-// ListTokensResult is a page of tokens as the protector returns them.
+// ListTokensResult is a page of tokens as Protector.ListTokens returns them:
+// opened, with values for active tokens only.
 type ListTokensResult struct {
 	Tokens []TokenRecord
 	Cursor *string

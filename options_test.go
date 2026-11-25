@@ -14,7 +14,7 @@ func configOf(p *Protector) *protectorConfig { return p.cfg }
 
 func TestProtectorOptions(t *testing.T) {
 	tokens := memory.NewTokenEngine()
-	enc := aes.New256GCMEncryptor()
+	enc := aes.NewEncryptor()
 	auditor := AuditorFunc(func(context.Context, AuditEvent) error { return nil })
 
 	c := configOf(NewProtector("ns", memory.NewKeyEngine(),
