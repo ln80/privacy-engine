@@ -118,7 +118,7 @@ func (e *KeyEngine) unwrap(ctx context.Context, namespace string, blobs core.Key
 			for _, k := range keys {
 				core.ZeroKey(k)
 			}
-			return nil, fmt.Errorf("%w: %w", core.ErrGetKeyFailure, err)
+			return nil, fmt.Errorf("unwrap key: %w", err)
 		}
 		keys[keyID] = k
 	}

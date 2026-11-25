@@ -93,12 +93,9 @@ records up to two hours in the past.
 
 Return the contract errors so callers can match them: `core.ErrTokenExists`,
 `*core.IndexTakenError`, `core.ErrTokenNotFound`, `core.ErrTokenErased`.
-Wrap storage failures with the core sentinel of the operation:
-`core.ErrTokenizeFailure` (`LookupIndex`, `Insert`),
-`core.ErrDetokenizeFailure` (`GetRecords`, `ListTokens`),
-`core.ErrDeleteTokenFailure` (`Forget`, `Restore`, `Erase`,
-`EraseForgotten`, `DeleteToken`), `core.ErrPurgeTokenFailure`
-(`PurgeNamespace`). Never include sealed values or indexes in errors.
+Wrap storage failures with context (`fmt.Errorf("insert token: %w", err)`);
+the Protector wraps them in its own errors. Never include sealed values or
+indexes in errors.
 
 SQLite needs `busy_timeout`, WAL and immediate transactions for concurrent
 inserts: see the SQLite section of [key-store.md](key-store.md#sqlite).

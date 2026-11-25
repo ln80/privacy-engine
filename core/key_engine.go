@@ -7,16 +7,10 @@ import (
 	"time"
 )
 
-// Errors returned by KeyEngine implementations
-var (
-	ErrPersistKeyFailure  = errors.New("failed to persist encryption key(s)")
-	ErrGetKeyFailure      = errors.New("failed to get encryption key(s)")
-	ErrReEnableKeyFailure = errors.New("failed to renable encryption key(s)")
-	ErrDisableKeyFailure  = errors.New("failed to disable encryption key")
-	ErrDeleteKeyFailure   = errors.New("failed to delete encryption key")
-	ErrPurgeKeyFailure    = errors.New("failed to purge encryption keys")
-	ErrKeyNotFound        = errors.New("encryption key not found")
-)
+// ErrKeyNotFound is returned by KeyEngine.DisableKey and ReEnableKey for a
+// key ID the engine never saw or a deleted key. The Protector wraps it when
+// Forget finds nothing to erase.
+var ErrKeyNotFound = errors.New("encryption key not found")
 
 // Encryption key lifecycle states.
 const (

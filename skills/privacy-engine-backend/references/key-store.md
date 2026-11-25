@@ -47,8 +47,7 @@ its material is still stored. Store times with at least millisecond
 precision: whole seconds shorten a 2-second test grace period by up to half.
 
 An `ACTIVE` record without key bytes cannot happen in a correct store. Treat
-it as corruption and return an error wrapping `core.ErrGetKeyFailure`; do not
-guess a state.
+it as corruption and return an error; do not guess a state.
 
 ## GetKeys (R-KE-1, R-KE-2)
 
@@ -134,7 +133,8 @@ MySQL need no such setting.
 
 ## Errors and secrets
 
-- Wrap storage failures with the core sentinels, e.g.
-  `fmt.Errorf("%w: %w", core.ErrGetKeyFailure, err)`.
+- Return `core.ErrKeyNotFound` where the contract says so; wrap storage
+  failures with context, e.g. `fmt.Errorf("get keys: %w", err)`. The
+  Protector wraps them in its own errors.
 - Never put key bytes in errors or logs. `core.Key` redacts itself in fmt
   and slog; a raw `[]byte` does not.

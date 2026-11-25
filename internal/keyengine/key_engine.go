@@ -262,7 +262,7 @@ func (e *engine) GetOrCreateKeys(ctx context.Context, namespace string, keyIDs [
 
 			newKey, err := keyGen(ctx, namespace, keyID)
 			if err != nil {
-				return nil, fmt.Errorf("%w: %w", core.ErrPersistKeyFailure, err)
+				return nil, fmt.Errorf("generate key: %w", err)
 			}
 			k := core.Key(newKey)
 			putCachedKey(cache, keyID, cloneKey(k))

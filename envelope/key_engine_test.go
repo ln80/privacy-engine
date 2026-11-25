@@ -116,10 +116,11 @@ func TestKeyEngineRefusesBadWrappers(t *testing.T) {
 	if _, err := envelope.NewKeyEngine(badWrapper{size: 32}, store).GetOrCreateKeys(ctx, "ns", []string{"a", "b"}, nil); err != nil {
 		t.Fatal(err)
 	}
-	failing := envelope.NewKeyEngine(badWrapper{unwrapErr: errors.New("kms down")}, store)
+	kmsDown := errors.New("kms down")
+	failing := envelope.NewKeyEngine(badWrapper{unwrapErr: kmsDown}, store)
 	keys, missing, err := failing.GetKeys(ctx, "ns", []string{"a", "b"})
-	if !errors.Is(err, core.ErrGetKeyFailure) || keys != nil || missing != nil {
-		t.Fatalf("expect core.ErrGetKeyFailure and no keys, got %v, %v, %v", keys, missing, err)
+	if !errors.Is(err, kmsDown) || keys != nil || missing != nil {
+		t.Fatalf("expect the wrapper's error and no keys, got %v, %v, %v", keys, missing, err)
 	}
 }
 

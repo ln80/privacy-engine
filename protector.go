@@ -39,6 +39,10 @@ var (
 	// or encrypted elsewhere. Encrypt refuses to keep or re-encrypt it.
 	ErrValueNotAuthentic = newErr("value looks encrypted but does not authenticate")
 
+	// ErrMultipleSubjects means Encrypt found data of several subjects in
+	// one struct, where the Protector allows one (see WithMultipleSubjects).
+	ErrMultipleSubjects = sensitive.ErrMultipleSubjectID
+
 	// ErrReservedSubjectID means a subject ID starts with "@". Those IDs name
 	// the library's own keys (the vault key is "@vault") and cannot be used to
 	// encrypt, forget, recover or derive.
@@ -173,7 +177,7 @@ func NewProtector(namespace string, engine core.KeyEngine, opts ...ProtectorOpti
 //
 // Each field is encrypted under its own subject's key. By default a struct
 // must use one subject: a second subjectID that governs data, or differing
-// subject values, fail with struct-sensitive's ErrMultipleSubjectID. Set
+// subject values, fail with ErrMultipleSubjects. Set
 // WithMultipleSubjects to allow several. A subject whose key is
 // forgotten fails with ErrSubjectForgotten.
 func (p *Protector) Encrypt(ctx context.Context, structPtrs ...any) (err error) {

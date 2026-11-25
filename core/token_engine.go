@@ -6,14 +6,14 @@ import (
 	"time"
 )
 
+// Errors of the TokenEngine contract (docs/implementing-backends.md).
 var (
-	ErrTokenNotFound            = errors.New("token not found")
-	ErrTokenErased              = errors.New("token is erased")
-	ErrTokenExists              = errors.New("token already exists")
-	ErrDetokenizeFailure        = errors.New("failed to detokenize token(s)")
-	ErrTokenizeFailure          = errors.New("failed to tokenize value(s)")
-	ErrDeleteTokenFailure       = errors.New("failed to delete token")
-	ErrPurgeTokenFailure        = errors.New("failed to purge tokens")
+	ErrTokenNotFound = errors.New("token not found")
+	ErrTokenErased   = errors.New("token is erased")
+	ErrTokenExists   = errors.New("token already exists")
+
+	// ErrTokenEngineNotConfigured is returned, wrapped, by the Protector's
+	// token methods when it has no TokenEngine.
 	ErrTokenEngineNotConfigured = errors.New("token engine is not configured")
 )
 
